@@ -1,0 +1,334 @@
+\section{World-Frame Projection and Position Integration}
+\label{sec:projection}
+
+% ----------------------------------------------------------------
+% TARGET: ~1 page. From quaternion to position.
+% ----------------------------------------------------------------
+
+\subsection{Rotating Acceleration to the World Frame}
+\label{sec:proj:rotation}
+
+Once the attitude quaternion $\mathbf{q}(t)$ has been estimated by the
+complementary filter, each raw accelerometer reading
+$\mathbf{a}_b(t)$ can be transformed into the world frame:
+
+\begin{equation}
+  \mathbf{a}_w(t) = \mathbf{q}(t) \otimes \mathbf{a}_{b,q}(t)
+                    \otimes \mathbf{q}^*(t)
+  \label{eq:a_world}
+\end{equation}
+
+\noindent where $\mathbf{a}_{b,q} = (0, a_x, a_y, a_z)$ is the accelerometer
+reading embedded as a pure quaternion. The vector part of the result gives
+$\mathbf{a}_w = (a_{w,x},\; a_{w,y},\; a_{w,z})$ in the world frame.
+
+% ----- FIGURE: rotation illustration -----
+% TODO: Illustration showing:
+%   - A tilted sensor with a_body vector
+%   - The quaternion rotation arrow
+%   - The resulting a_world vector in the world frame
+%   - Gravity subtraction step
+%
+% \begin{figure}[t]
+%   \centering
+%   \includegraphics[width=\columnwidth]{frame_rotation.pdf}
+%   \caption{Projection of the body-frame acceleration into the world frame
+%            via quaternion conjugation, followed by gravity removal.}
+%   \label{fig:frame_rotation}
+% \end{figure}
+
+\subsection{Gravity Removal}
+\label{sec:proj:gravity}
+
+In the world frame, gravity appears as a constant vector
+$\mathbf{g}_w = (0,\; 0,\; g)^\top$ (assuming ENU convention with
+$g \approx 9.81\;\text{m/s}^2$). The linear acceleration is:
+
+\begin{equation}
+  \mathbf{a}_\text{lin}(t) = \mathbf{a}_w(t) - \mathbf{g}_w
+  \label{eq:gravity_removal}
+\end{equation}
+
+\noindent This step is possible \emph{only} because the rotation to the world
+frame has been performed first. In the body frame, the gravity component
+changes direction with every rotation, making subtraction impossible.
+
+\subsection{Double Integration to Position}
+\label{sec:proj:integration}
+
+Velocity and position are obtained by numerical integration of the
+gravity-free acceleration:
+
+\begin{align}
+  \mathbf{v}(t + \Delta t) &= \mathbf{v}(t)
+    + \mathbf{a}_\text{lin}(t)\,\Delta t
+  \label{eq:velocity} \\[4pt]
+  \mathbf{p}(t + \Delta t) &= \mathbf{p}(t)
+    + \mathbf{v}(t)\,\Delta t
+    + \tfrac{1}{2}\,\mathbf{a}_\text{lin}(t)\,\Delta t^2
+  \label{eq:position}
+\end{align}
+
+\noindent with initial conditions $\mathbf{v}(0) = \mathbf{0}$ and
+$\mathbf{p}(0) = \mathbf{0}$ (the sensor starts at rest at the origin).
+
+\subsection{Drift in Position Estimation}
+\label{sec:proj:drift}
+
+Double integration amplifies any residual error in
+$\mathbf{a}_\text{lin}$: a constant bias $\epsilon$ in acceleration produces
+a position error that grows as $\frac{1}{2}\epsilon\,t^2$. This error has two
+distinct sources:
+
+\paragraph{Static bias.}
+The accelerometer has a small, approximately constant offset that persists
+even at rest. This can be estimated and removed during an initial calibration
+phase by averaging the linear acceleration over a stationary period of
+several seconds.
+
+\paragraph{Gravity leakage from orientation error.}
+This is the dominant source of drift. Even a small error $\delta$ in the
+estimated roll or pitch causes the gravity vector to be imperfectly
+subtracted after the world-frame rotation, leaving a residual:
+
+\begin{equation}
+  \epsilon_g \approx g \sin(\delta)
+  \label{eq:gravity_leakage}
+\end{equation}
+
+\noindent For example, an orientation error of just $\delta = 1.4°$ produces
+a residual of $9.81 \times \sin(1.4°) \approx 0.24$~m/s$^2$. After double
+integration over a time interval $T$:
+
+\begin{equation}
+  \Delta p = \tfrac{1}{2}\,\epsilon_g\,T^2
+           = \tfrac{1}{2}\,g\sin(\delta)\,T^2
+  \label{eq:drift_position}
+\end{equation}
+
+\noindent For $T = 3$~s, this yields $\Delta p \approx 1.08$~m of spurious
+displacement. Crucially, this error \emph{changes direction} as the device
+rotates---it is not a fixed offset that can be calibrated away. It affects all
+three world-frame axes (X, Y, Z), not just the vertical. This is the
+fundamental limitation of inertial navigation with consumer-grade MEMS
+sensors.
+
+\subsection{Drift Mitigation Strategies}
+\label{sec:proj:mitigation}
+
+Three complementary strategies are applied to reduce the drift:
+
+\subsubsection{Static Calibration with Measured Gravity}
+\label{sec:proj:calibration}
+
+Rather than using the textbook value $g = 9.81$~m/s$^2$, the actual gravity
+magnitude is estimated from the sensor data during the initial rest phase:
+
+\begin{equation}
+  g_\text{meas} = \frac{1}{N_c} \sum_{n=1}^{N_c}
+    \lVert \mathbf{a}_b[n] \rVert
+  \label{eq:g_measured}
+\end{equation}
+
+\noindent where $N_c$ is the number of samples in the rest phase.
+The residual linear acceleration bias is then estimated as the mean of
+$\mathbf{a}_\text{lin}$ over the same interval and subtracted from the entire
+signal. Using the full rest phase ($N_c \approx 1000$ samples at 100~Hz,
+corresponding to $\sim$10~s) instead of a handful of samples dramatically
+improves the bias estimate.
+
+\subsubsection{Zero-Velocity Updates (ZUPT)}
+\label{sec:proj:zupt}
+
+When the sensor is stationary, its true velocity is zero. Any non-zero
+integrated velocity at that instant is, by definition, accumulated error.
+A \emph{zero-velocity update} exploits this constraint by resetting the
+velocity to zero whenever the sensor is detected to be at rest.
+
+\paragraph{Stationary detection.}
+Two conditions must hold simultaneously over a sliding window of $W$
+consecutive samples:
+
+\begin{align}
+  \bigl|\,\lVert \mathbf{a}_b[n] \rVert - g\,\bigr|
+    &< \sigma_a
+  \label{eq:zupt_accel} \\[4pt]
+  \lVert \boldsymbol{\omega}_b[n] \rVert
+    &< \sigma_\omega
+  \label{eq:zupt_gyro}
+\end{align}
+
+\noindent The first condition checks that the accelerometer norm is close to
+gravity (no linear acceleration). The second checks that the angular velocity
+is near zero (no rotation). Requiring both conditions over a window of $W$
+samples (typically $W = 5$) prevents false positives from momentary pauses in
+a single channel. Typical thresholds are $\sigma_a = 0.3$~m/s$^2$ and
+$\sigma_\omega = 0.15$~rad/s.
+
+\paragraph{Velocity reset.}
+At every sample classified as stationary, the integrated velocity is forced to
+zero on all three axes:
+
+\begin{equation}
+  \text{if stationary}[n]: \quad \mathbf{v}[n] = \mathbf{0}
+  \label{eq:zupt_reset}
+\end{equation}
+
+\noindent This prevents unbounded velocity drift during rest periods and
+provides anchor points for the subsequent backward correction.
+
+\subsubsection{Backward Velocity Correction}
+\label{sec:proj:backward}
+
+ZUPT alone resets velocity at rest, but during movement segments the velocity
+still drifts due to gravity leakage. The \emph{backward correction} addresses
+this by distributing the accumulated velocity error linearly across each
+movement segment.
+
+\paragraph{Segment identification.}
+A movement segment is defined as the interval between two consecutive
+stationary phases. Let $n_s$ be the first moving sample (where the sensor
+leaves rest) and $n_e$ be the last moving sample (just before the next rest
+phase begins). At $n_e$, the velocity $\mathbf{v}[n_e]$ should ideally
+transition smoothly to zero, but in practice it carries an error
+$\mathbf{e}_v = \mathbf{v}[n_e]$ due to drift accumulated during the segment.
+
+\paragraph{Linear error distribution.}
+The error is assumed to grow approximately linearly during the segment (since
+gravity leakage acts as a roughly constant bias over short intervals). It is
+therefore distributed proportionally:
+
+\begin{equation}
+  \mathbf{v}_\text{corr}[n] = \mathbf{v}[n]
+    - \mathbf{e}_v \cdot \frac{n - n_s + 1}{n_e - n_s + 1},
+    \quad n \in [n_s,\, n_e]
+  \label{eq:backward_correction}
+\end{equation}
+
+\noindent At $n = n_s$ the correction is minimal; at $n = n_e$ the full error
+is subtracted, ensuring a smooth transition to zero velocity at the next ZUPT.
+The corrected velocity is then integrated to obtain the position estimate.
+
+\paragraph{Limitations.}
+The backward correction is effective when the user's motion naturally includes
+pauses (e.g.\ drawing shapes with intermittent stops). However, during
+continuous uninterrupted motion, no ZUPT events occur and the correction
+cannot be applied. This motivates the high-pass filtering strategy described
+next.
+
+\subsubsection{High-Pass Filtering of Linear Acceleration}
+\label{sec:proj:highpass}
+
+Even after gravity subtraction and static bias removal, the linear
+acceleration retains a slowly varying residual caused by orientation
+estimation errors. As shown in
+Section~\ref{sec:proj:drift}, an orientation error of $\delta$ produces a
+gravity leakage $\epsilon_g \approx g\sin(\delta)$ that changes direction as
+the device rotates but maintains a \emph{non-zero mean} over time. This
+non-zero mean, when integrated twice, produces the characteristic
+monotonic drift observed in position estimates.
+
+The key insight is that \textbf{real translational acceleration has zero
+mean}: every acceleration phase (push) is followed by a deceleration phase
+(stop), so the integral over a complete movement cycle is approximately zero.
+In contrast, gravity leakage is a low-frequency bias with non-zero mean. A
+high-pass filter can therefore separate the two.
+
+\paragraph{First-order IIR high-pass filter.}
+We apply a causal first-order high-pass filter independently to each axis of
+$\mathbf{a}_\text{lin}$:
+
+\begin{equation}
+  y[n] = \alpha_\text{hp}\,\bigl(y[n-1] + x[n] - x[n-1]\bigr)
+  \label{eq:highpass}
+\end{equation}
+
+\noindent where $x[n]$ is the input (linear acceleration after bias removal)
+and $y[n]$ is the filtered output. The parameter
+$\alpha_\text{hp} \in (0,\,1)$ controls the cutoff frequency:
+
+\begin{equation}
+  f_c = \frac{1 - \alpha_\text{hp}}{2\pi\,\Delta t}
+  \label{eq:hp_cutoff}
+\end{equation}
+
+\noindent Signals below $f_c$ are attenuated (including the gravity leakage
+bias); signals above $f_c$ pass through (the actual motion).
+
+\paragraph{Choosing the cutoff frequency.}
+The cutoff must satisfy two constraints simultaneously:
+
+\begin{enumerate}
+  \item $f_c$ must be \textbf{above} the frequency of the gravity leakage
+        bias, which is quasi-static ($\ll 1$~Hz).
+  \item $f_c$ must be \textbf{below} the fundamental frequency of the actual
+        motion, so that the real acceleration signal is preserved.
+\end{enumerate}
+
+\noindent The optimal value therefore depends on the \emph{type of motion},
+not on the individual recording:
+
+\begin{itemize}
+  \item \textbf{Fast hand gestures} ($\sim$2--4~Hz): $\alpha_\text{hp}
+        \approx 0.85$, giving $f_c \approx 2.4$~Hz at 100~Hz sampling.
+  \item \textbf{Walking or slow movements} ($\sim$1--2~Hz):
+        $\alpha_\text{hp} \approx 0.95$, giving $f_c \approx 0.8$~Hz.
+  \item \textbf{Very slow gestures} ($< 1$~Hz): $\alpha_\text{hp}
+        \approx 0.98$, giving $f_c \approx 0.3$~Hz. At this point the filter
+        provides minimal benefit, as the leakage frequency overlaps with the
+        motion frequency.
+\end{itemize}
+
+\noindent If $f_c$ is set too high, the filter removes part of the real
+acceleration signal, causing the estimated displacement to be
+\emph{underestimated}. If $f_c$ is set too low, the gravity leakage passes
+through and drift reappears. In practice, $\alpha_\text{hp}$ does not need to
+be re-tuned for each recording---it only needs to match the general category
+of motion (fast vs.\ slow).
+
+\paragraph{Effect on drift.}
+In our experiments, adding the high-pass filter reduced the position drift
+from several meters to the order of $\pm 0.2$~m for a 17-second recording of
+repetitive up-and-down hand motion, even without any ZUPT corrections (no
+pauses in the motion). The mean residual acceleration on the Z-axis dropped
+from $+0.41$~m/s$^2$ (without filter) to $+0.02$~m/s$^2$ (with
+$\alpha_\text{hp} = 0.85$).
+
+\subsubsection{Summary of the Drift Mitigation Pipeline}
+\label{sec:proj:pipeline_summary}
+
+The complete pipeline applies five corrections in sequence:
+
+\begin{enumerate}
+  \item \textbf{Measured gravity magnitude}: $g_\text{meas}$ from the rest
+        phase replaces the nominal $9.81$~m/s$^2$.
+  \item \textbf{Static bias removal}: mean of
+        $\mathbf{a}_\text{lin}$ during rest is subtracted.
+  \item \textbf{Moving average}: a short window ($\sim$5 samples) smooths
+        high-frequency noise and vibration spikes.
+  \item \textbf{High-pass filter}: removes the low-frequency gravity leakage
+        bias that causes monotonic drift.
+  \item \textbf{Acceleration clamp}: limits $|\mathbf{a}_\text{lin}|$ to a
+        physically reasonable maximum (e.g.\ $\pm 4$~m/s$^2$ for hand motion),
+        rejecting residual spikes from large orientation errors.
+\end{enumerate}
+
+\noindent After filtering, ZUPT and backward velocity correction are applied
+during integration when stationary phases are available. For continuous motion
+without pauses, the high-pass filter alone provides the primary drift
+mitigation.
+
+% ----- FIGURE: full pipeline -----
+% TODO: End-to-end block diagram:
+%   [Accel] ──→ [Tilt] ──→ [LPF] ──┐
+%   [Gyro]  ──→ [∫ω]  ──→ [HPF] ──┤→ [q(t)] → [Rotate a_b] → [-g] → [∫∫] → [p(t)]
+%
+% \begin{figure*}[t]
+%   \centering
+%   \includegraphics[width=\textwidth]{full_pipeline.pdf}
+%   \caption{Complete signal-processing pipeline: from raw sensor data to
+%            three-dimensional position. The complementary filter estimates
+%            orientation; the quaternion rotation projects acceleration into
+%            the world frame; double integration yields position.}
+%   \label{fig:pipeline}
+% \end{figure*}

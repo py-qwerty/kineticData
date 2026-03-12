@@ -1,0 +1,84 @@
+\section{Introduction}
+\label{sec:introduction}
+
+% ----------------------------------------------------------------
+% TARGET: ~1.5 pages (two-column). Expand each subsection below.
+% ----------------------------------------------------------------
+
+\subsection{Motivation}
+\label{sec:intro:motivation}
+
+Modern smartphones and wearable devices carry inertial measurement units (IMUs)
+composed of a tri-axial accelerometer and a tri-axial gyroscope. These sensors
+open the door to applications in pedestrian navigation, gesture recognition,
+augmented reality, and biomechanical analysis---all of which require accurate
+knowledge of the device's orientation and position in space.
+
+However, each sensor has complementary weaknesses. The accelerometer provides a
+long-term stable reference to the gravity vector but is corrupted by any
+non-gravitational acceleration and high-frequency vibration. The gyroscope
+measures angular velocity with high bandwidth and low noise in the short term,
+yet its numerical integration accumulates unbounded drift over time. Neither
+sensor alone can deliver a reliable orientation estimate; fusing both is
+essential.
+
+% TODO [Fig.~\ref{fig:raw_signals}]: side-by-side plots of raw accelerometer
+% and gyroscope signals showing noise vs.\ drift.
+
+\subsection{Problem Statement}
+\label{sec:intro:problem}
+
+Given a stream of accelerometer readings
+$\mathbf{a}_b(t) \in \mathbb{R}^3$ and gyroscope readings
+$\boldsymbol{\omega}_b(t) \in \mathbb{R}^3$, both expressed in the sensor's
+\emph{body frame}~$\mathcal{B}$, we seek to compute at every time step:
+
+\begin{enumerate}
+  \item A unit quaternion $\mathbf{q}(t)$ representing the orientation of
+        $\mathcal{B}$ with respect to a fixed \emph{world frame}~$\mathcal{W}$.
+  \item A position vector $\mathbf{p}(t) \in \mathbb{R}^3$ in $\mathcal{W}$,
+        obtained by projecting the acceleration into the world frame, removing
+        gravity, and double-integrating.
+\end{enumerate}
+
+% TODO [Fig.~\ref{fig:frames}]: illustration of body frame attached to the
+% sensor vs.\ world frame (N-E-D or E-N-U).
+
+\subsection{Proposed Approach}
+\label{sec:intro:approach}
+
+Our approach proceeds in three stages:
+
+\begin{enumerate}
+  \item \textbf{Attitude estimation.} A complementary filter blends the
+        low-frequency content of the accelerometer (via a low-pass filter) with
+        the high-frequency content of the gyroscope (via a high-pass filter) to
+        produce a drift-free, low-noise orientation estimate expressed as a unit
+        quaternion.
+  \item \textbf{Frame rotation.} The quaternion is used to rotate each
+        accelerometer sample from the body frame into the world frame using the
+        conjugation $\mathbf{a}_w = \mathbf{q} \otimes \mathbf{a}_b \otimes
+        \mathbf{q}^*$, after which the constant gravity component is subtracted.
+  \item \textbf{Position integration.} The resulting gravity-free
+        world-frame acceleration is double-integrated over time to recover
+        velocity and position.
+\end{enumerate}
+
+% TODO [Fig.~\ref{fig:pipeline}]: block diagram of the full pipeline
+% (sensors → filter → quaternion → rotation → integration → position).
+
+\subsection{Document Structure}
+\label{sec:intro:structure}
+
+The remainder of this paper is organised as follows.
+Section~\ref{sec:reference_frames} defines the coordinate frames and motivates
+the need for a rotation formalism.
+Section~\ref{sec:quaternions} introduces quaternion algebra and its application
+to three-dimensional rotations.
+Section~\ref{sec:complementary_filter} derives the complementary filter used
+for attitude estimation.
+Section~\ref{sec:projection} describes the projection of accelerometer data
+into the world frame and the subsequent position integration.
+Section~\ref{sec:results} presents experimental results, and
+Section~\ref{sec:conclusions} concludes with a summary and directions for future
+work.

@@ -1,0 +1,21 @@
+This paper presents a method for tracking the three-dimensional position and
+orientation of a consumer-grade inertial measurement unit (IMU) using
+quaternion-based sensor fusion. Raw accelerometer and gyroscope readings are
+expressed in the sensor's body frame, which rotates freely with the device. To
+recover motion in a fixed world frame, we first estimate the sensor's attitude
+by means of a complementary filter---a linear combination of a low-pass
+filtered accelerometer signal (stable in the long term but sensitive to
+vibration) and a high-pass filtered gyroscope integral (accurate in the short
+term but subject to drift). The resulting orientation, encoded as a unit
+quaternion, is used at every time step to rotate the measured acceleration into
+the world frame and subtract gravity. The gravity-free world-frame acceleration
+is then double-integrated to yield a three-dimensional position trajectory
+starting from the origin. We describe the full signal-processing pipeline, from
+raw sensor acquisition to position output, detail the mathematical formulation
+of quaternion rotations and the complementary filter, and discuss practical
+considerations such as drift mitigation and numerical stability.
+
+\vspace{0.3em}
+\noindent\textbf{Keywords:} sensor fusion, quaternions, complementary filter,
+inertial navigation, accelerometer, gyroscope, attitude estimation, position
+tracking.

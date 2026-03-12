@@ -1,0 +1,47 @@
+\section{Experimental Results}
+\label{sec:results}
+
+% ----------------------------------------------------------------
+% TARGET: ~1 page. To be filled with real data.
+% ----------------------------------------------------------------
+
+% TODO: Fill in with actual experimental results.
+% Suggested content:
+%
+% \subsection{Experimental Setup}
+% - Device used (iPhone model, iOS version)
+% - Sampling rate (e.g., 100 Hz)
+% - Test scenarios (static, rotation-only, translation, combined)
+% - Ground-truth method (if available)
+%
+% \subsection{Attitude Estimation Accuracy}
+% - Compare complementary filter output vs. CoreMotion's built-in quaternion
+% - Show roll/pitch/yaw over time
+% - [Fig]: time-series plot of estimated vs. reference angles
+%
+% \subsection{Position Tracking}
+% - Show 3D trajectory for a known path
+% - Discuss drift over time
+% - [Fig]: 3D trajectory plot
+% - [Fig]: position error vs. time
+%
+% \subsection{Effect of Filter Coefficient}
+% - Sweep alpha from 0.90 to 0.99
+% - Show noise vs. drift trade-off
+% - [Fig]: comparison of different alpha values
+
+\section{Conclusions and Future Work}
+\label{sec:conclusions}
+
+% TODO: Summarise findings and outline next steps.
+% Suggested content:
+%
+% \subsection{Summary}
+% - Recap the pipeline: complementary filter → quaternion → rotation → integration
+% - Highlight key advantage: singularity-free orientation with minimal computation
+%
+% \subsection{Future Work}
+% - Extended Kalman Filter or Madgwick filter for better accuracy
+% - Magnetometer integration for absolute heading
+% - Map-aided or vision-aided drift correction
+% - Real-time implementation analysis on iOS (latency, power consumption)

@@ -1,0 +1,283 @@
+\section{Gradient-Descent Attitude Estimation: The Madgwick Filter}
+\label{sec:madgwick}
+
+% ----------------------------------------------------------------
+% Motivation, derivation, and comparison with the complementary filter.
+% ----------------------------------------------------------------
+
+The complementary filter presented in Section~\ref{sec:complementary_filter}
+provides an effective and intuitive approach to sensor fusion.  However, its
+scalar formulation operates on Euler angles independently, which introduces
+two practical limitations: (i)~the relationship between body-frame angular
+velocities and Euler angle rates is \emph{nonlinear and coupled} (requiring
+explicit Euler rate equations), and (ii)~the representation becomes singular
+near $\pm 90^\circ$ pitch (gimbal lock).  While the quaternion form of the
+complementary filter (Section~\ref{sec:cf:quaternion}) addresses these issues
+in principle via SLERP blending, an alternative family of algorithms performs
+the fusion \emph{natively} in quaternion space using gradient descent on an
+orientation error objective.  The most widely adopted of these is the filter
+proposed by Madgwick et al.~(2011), which we describe in this section.
+
+\subsection{Problem Statement}
+\label{sec:madg:problem}
+
+Given a stream of gyroscope readings
+$\boldsymbol{\omega}_b \in \mathbb{R}^3$, accelerometer readings
+$\mathbf{a}_b \in \mathbb{R}^3$, and (optionally) magnetometer readings
+$\mathbf{m}_b \in \mathbb{R}^3$, we seek the unit quaternion
+$\mathbf{q}(t)$ that represents the orientation of the sensor body frame
+with respect to a fixed world frame at each time step.
+
+The key idea is to formulate attitude estimation as an \emph{optimisation
+problem}: find the quaternion that best aligns the sensor measurements with
+known reference directions in the world frame (gravity and the geomagnetic
+field).
+
+\subsection{Gyroscope Prediction}
+\label{sec:madg:gyro}
+
+As in the complementary filter, the gyroscope provides a short-term
+orientation prediction.  Given the current estimate $\mathbf{q}(t)$ and the
+angular velocity $\boldsymbol{\omega}_b(t)$, the predicted quaternion is
+obtained by integrating the quaternion kinematic equation
+(Eq.~\ref{eq:quat_euler}):
+
+\begin{equation}
+  \mathbf{q}_{\omega}(t + \Delta t)
+  = \mathbf{q}(t)
+    + \frac{\Delta t}{2}\,\mathbf{q}(t) \otimes \boldsymbol{\omega}_q(t)
+  \label{eq:madg_gyro}
+\end{equation}
+
+\noindent where $\boldsymbol{\omega}_q = (0,\, \omega_x,\, \omega_y,\,
+\omega_z)$.  This step is identical to the gyroscope path in the
+complementary filter and inherits the same drift characteristics.
+
+\subsection{Accelerometer and Magnetometer Correction via Gradient Descent}
+\label{sec:madg:gradient}
+
+The correction step is where the Madgwick filter fundamentally differs from
+the complementary filter.  Instead of extracting Euler angles from the
+accelerometer and blending them with the gyroscope output, the Madgwick
+filter defines an \emph{objective function} whose minimum corresponds to the
+correct orientation.
+
+\subsubsection{Objective Function (IMU: Accelerometer Only)}
+
+Let $\hat{\mathbf{d}}_w = (0,\, 0,\, 1)^\top$ be the expected direction of
+gravity in the world frame (normalised).  If the true orientation is
+$\mathbf{q}$, then the accelerometer should measure:
+
+\begin{equation}
+  \hat{\mathbf{a}}_b = \mathbf{q}^* \otimes \hat{\mathbf{d}}_{w,q}
+                       \otimes \mathbf{q}
+  \label{eq:expected_accel}
+\end{equation}
+
+\noindent The error between the predicted and actual normalised accelerometer
+reading $\hat{\mathbf{a}}_b^{\,\text{meas}}$ defines the objective function:
+
+\begin{equation}
+  f(\mathbf{q})
+  = \mathbf{q}^* \otimes \hat{\mathbf{d}}_{w,q} \otimes \mathbf{q}
+    - \hat{\mathbf{a}}_{b,q}^{\,\text{meas}}
+  \label{eq:objective}
+\end{equation}
+
+\noindent where $f : \mathbb{R}^4 \to \mathbb{R}^3$ maps a quaternion to the
+residual between the expected and observed gravity direction.  The optimal
+orientation satisfies $f(\mathbf{q}) = \mathbf{0}$.
+
+\subsubsection{Gradient Step}
+
+Rather than solving the full nonlinear optimisation, Madgwick applies a
+\emph{single gradient descent step} per time sample, which is sufficient
+because the orientation changes slowly relative to the sampling rate:
+
+\begin{equation}
+  \mathbf{q}_{\nabla}(t)
+  = \mathbf{q}(t)
+    - \beta\,\frac{\nabla f(\mathbf{q})}{\|\nabla f(\mathbf{q})\|}
+  \label{eq:gradient_step}
+\end{equation}
+
+\noindent where $\nabla f = J^\top\!(\mathbf{q})\, f(\mathbf{q})$ is
+computed analytically from the Jacobian $J(\mathbf{q})$ of the objective
+function with respect to the quaternion components.  The normalisation
+$\|\nabla f\|$ ensures that the step magnitude depends only on $\beta$, not
+on the error amplitude.
+
+\subsubsection{Extension to MARG (with Magnetometer)}
+
+When magnetometer data is available, the objective function is extended to
+include the geomagnetic field direction.  Let $\hat{\mathbf{b}}_w$ be the
+expected magnetic field direction in the world frame (computed from the
+magnetometer measurement itself, projected to have zero East component).
+The combined objective becomes:
+
+\begin{equation}
+  f_{\text{MARG}}(\mathbf{q})
+  = \begin{bmatrix}
+      f_g(\mathbf{q}) \\[2pt]
+      f_b(\mathbf{q})
+    \end{bmatrix}
+  \label{eq:objective_marg}
+\end{equation}
+
+\noindent where $f_g$ is the gravity residual and $f_b$ is the magnetic field
+residual.  The Jacobian becomes a $6 \times 4$ matrix, and the gradient step
+proceeds analogously.  The magnetometer provides an absolute heading
+reference that the accelerometer alone cannot observe (since gravity is
+invariant under rotations about the vertical axis, as discussed in
+Section~\ref{sec:proj:gravity}).
+
+\subsection{Filter Fusion}
+\label{sec:madg:fusion}
+
+The final quaternion estimate is a weighted combination of the gyroscope
+prediction and the gradient correction:
+
+\begin{equation}
+  \boxed{
+    \mathbf{q}(t + \Delta t)
+    = \gamma\,\mathbf{q}_{\omega}(t + \Delta t)
+      + (1 - \gamma)\,\mathbf{q}_{\nabla}(t + \Delta t)
+  }
+  \label{eq:madg_fusion}
+\end{equation}
+
+\noindent followed by renormalisation $\mathbf{q} \leftarrow \mathbf{q} /
+\|\mathbf{q}\|$.  In the original formulation, the gain parameter $\beta$
+simultaneously controls the step size and the effective blending ratio,
+playing a role analogous to $\alpha$ in the complementary filter.  A typical
+value is $\beta = 0.041$ for MARG configurations.
+
+The crucial difference is that \textbf{the entire fusion operates in
+quaternion space}: there is no intermediate conversion to Euler angles, no
+need for Euler rate equations, and no singularity at $\pm 90^\circ$ pitch.
+
+\subsection{Comparison with the Complementary Filter}
+\label{sec:madg:comparison}
+
+Table~\ref{tab:cf_vs_madg} summarises the key differences between the two
+approaches.
+
+\begin{table}[t]
+  \centering
+  \caption{Complementary filter vs.\ Madgwick filter.}
+  \label{tab:cf_vs_madg}
+  \small
+  \begin{tabular}{@{}lcc@{}}
+    \toprule
+    \textbf{Property}
+      & \textbf{Complementary}
+      & \textbf{Madgwick} \\
+    \midrule
+    Fusion domain
+      & Euler angles
+      & Quaternion \\
+    Gimbal lock
+      & Yes (scalar form)
+      & No \\
+    Euler rate equations
+      & Required
+      & Not needed \\
+    Magnetometer fusion
+      & Separate filter
+      & Integrated \\
+    Tuning parameters
+      & $\alpha$ per axis
+      & Single $\beta$ \\
+    Computational cost
+      & Very low
+      & Low \\
+    Gravity sign convention
+      & Must be handled
+      & Automatic \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsubsection{Euler Rate Coupling}
+
+In the scalar complementary filter, the gyroscope rates
+$(\omega_x, \omega_y, \omega_z)$ are used directly as the rates of change
+of roll, pitch, and yaw.  This is only valid for small angles.  The correct
+relationships are:
+
+\begin{align}
+  \dot{\phi}   &= \omega_x
+    + \sin\phi\,\tan\theta\;\omega_y
+    + \cos\phi\,\tan\theta\;\omega_z
+  \label{eq:euler_rate_roll} \\[3pt]
+  \dot{\theta} &= \cos\phi\;\omega_y - \sin\phi\;\omega_z
+  \label{eq:euler_rate_pitch} \\[3pt]
+  \dot{\psi}   &= \frac{\sin\phi}{\cos\theta}\;\omega_y
+    + \frac{\cos\phi}{\cos\theta}\;\omega_z
+  \label{eq:euler_rate_yaw}
+\end{align}
+
+\noindent At large inclinations (e.g.\ $\theta > 20^\circ$), ignoring this
+coupling introduces significant cross-axis errors that corrupt the
+orientation estimate and, consequently, the gravity removal step.  The
+Madgwick filter avoids this entirely because quaternion integration
+(Eq.~\ref{eq:madg_gyro}) naturally handles the nonlinear coupling
+between axes without any explicit trigonometric corrections.
+
+\subsubsection{Gravity Sign Convention}
+
+A subtle but practically important difference concerns the sign of the
+gravity vector.  The complementary filter extracts tilt angles from the
+accelerometer and subtracts gravity as a scalar magnitude
+$\mathbf{g}_w = (0, 0, \pm g)$, where the sign depends on the sensor
+convention.  If the sensor reports $a_z \approx +9.8$~m/s$^2$ at rest
+(screen up), the gravity vector must be subtracted as $(0, 0, +g)$; if it
+reports $a_z \approx -9.8$~m/s$^2$ (screen down or alternate convention),
+the sign must be flipped.
+
+The Madgwick filter is immune to this issue: it works with the
+\emph{normalised} accelerometer reading and optimises for the direction
+of gravity, not its sign.  The gravity vector in the world frame is then
+determined empirically from the calibration phase as:
+
+\begin{equation}
+  \mathbf{g}_w = \frac{1}{N_c} \sum_{n=1}^{N_c}
+    \mathbf{a}_w[n]
+  \label{eq:g_world_measured}
+\end{equation}
+
+\noindent where $\mathbf{a}_w[n] = \mathbf{q}[n] \otimes
+\mathbf{a}_{b,q}[n] \otimes \mathbf{q}^*[n]$ is the accelerometer reading
+rotated to the world frame using the Madgwick quaternion.  This approach is
+robust to any sensor sign convention and eliminates a common source of
+implementation errors.
+
+\subsubsection{Effect on Position Estimation}
+
+Because the Madgwick filter produces a more accurate orientation estimate
+(especially at large inclinations), the gravity removal step is more
+precise, which directly reduces the gravity leakage that dominates the
+position drift.  In our experiments with a 39-second recording of repetitive
+vertical hand movements (``subidas\_bajadas\_con\_pausa''), the Madgwick
+pipeline produced:
+
+\begin{itemize}
+  \item A Z-axis range of $[0.00,\; 0.76]$~m, consistent with the actual
+        hand movement amplitude.
+  \item No negative Z values, confirming that the hand never descended below
+        its starting position (as expected from the experimental protocol).
+  \item Near-zero residual bias after gravity subtraction
+        ($\sim 10^{-6}$~m/s$^2$), compared to biases of order $\pm 19$~m/s$^2$
+        with the scalar complementary filter before sign correction.
+\end{itemize}
+
+\noindent Furthermore, the Madgwick pipeline does not require a high-pass
+filter on the linear acceleration, which was previously necessary to
+compensate for gravity leakage in the complementary filter approach.  The
+removal of this filter is significant because the high-pass filter, while
+effective at removing drift, also \emph{destroys sustained displacements}:
+it forces the acceleration to have zero mean, which means any net position
+change (e.g.\ moving up and staying up) is gradually pulled back toward the
+origin.  This manifested as backward loops at rest positions and spurious
+negative heights---artefacts that disappear entirely with the improved
+orientation from the Madgwick filter.

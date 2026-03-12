@@ -1,0 +1,107 @@
+\documentclass[twocolumn, a4paper, 10pt]{article}
+
+% --- Encoding & Language ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+
+% --- Page Layout ---
+\usepackage[
+  top=2.5cm,
+  bottom=2.5cm,
+  left=2cm,
+  right=2cm,
+  columnsep=0.8cm
+]{geometry}
+
+% --- Typography ---
+\usepackage{lmodern}
+\usepackage{microtype}
+
+% --- Math ---
+\usepackage{amsmath, amssymb, amsfonts}
+
+% --- Graphics & Figures ---
+\usepackage{graphicx}
+\usepackage[labelfont=bf, font=small]{caption}
+\usepackage{subcaption}
+\graphicspath{{images/}}
+
+% --- Tables ---
+\usepackage{booktabs}
+\usepackage{array}
+
+% --- Code Listings ---
+\usepackage{listings}
+
+% --- References & Links ---
+\usepackage[colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue]{hyperref}
+\usepackage{cleveref}
+
+% --- Bibliography ---
+\usepackage[numbers, sort&compress]{natbib}
+
+% --- Headers & Footers ---
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\leftmark}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% --- Section Formatting ---
+\usepackage{titlesec}
+\titleformat{\section}{\large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection.}{0.5em}{}
+
+% --- Misc ---
+\usepackage{xcolor}
+\usepackage{lipsum} % Remove after drafting
+
+% ============================================================
+%                       DOCUMENT
+% ============================================================
+
+\title{%
+  \textbf{Quaternion-Based Sensor Fusion for \\
+  Inertial Position Tracking}
+}
+
+\author{%
+  Pablo Fern\'andez Lucas \\
+  \small \textit{Independent Research} \\
+  \small \href{mailto:email@example.com}{email@example.com}
+}
+
+\date{\today}
+
+\begin{document}
+
+% --- Title ---
+\twocolumn[
+  \maketitle
+  \begin{@twocolumnfalse}
+    \begin{abstract}
+      \input{chapters/abstract}
+    \end{abstract}
+    \vspace{1cm}
+  \end{@twocolumnfalse}
+]
+
+% --- Body ---
+\input{chapters/introduction}        % 1. Introduction
+\input{chapters/background}          % 2. Reference Frames and Sensor Models
+\input{chapters/methodology}         % 3. Quaternion Algebra
+\input{chapters/implementation}      % 4. Complementary Filter
+\input{chapters/madgwick}            % 5. Madgwick Filter
+\input{chapters/results}             % 6. World-Frame Projection & Position
+\input{chapters/conclusions}         % 7. Results & 8. Conclusions
+
+% --- Appendices ---
+\input{chapters/appendix_error}       % A. Error bound derivations
+
+% --- Bibliography ---
+\bibliographystyle{unsrtnat}
+% \bibliography{references} % Uncomment when references.bib exists
+
+\end{document}

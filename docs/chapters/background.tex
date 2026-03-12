@@ -1,0 +1,612 @@
+\section{Reference Frames and Sensor Models}
+\label{sec:reference_frames}
+
+% ----------------------------------------------------------------
+% TARGET: ~1.5 pages. Two frames + two sensor models.
+% ----------------------------------------------------------------
+
+\subsection{The World Frame and the Body Frame}
+\label{sec:frames:definition}
+
+We define two right-handed Cartesian coordinate systems
+(Fig.~\ref{fig:frames}):
+
+\begin{itemize}
+  \item \textbf{World frame} $\mathcal{W} = \{X_w, Y_w, Z_w\}$. A fixed,
+        Earth-referenced frame. We adopt the East-North-Up (ENU) convention:
+        $X_w$ points East, $Y_w$ points North, and $Z_w$ points upward
+        (opposite to gravity).
+  \item \textbf{Body frame} $\mathcal{B} = \{X_b, Y_b, Z_b\}$. A frame
+        rigidly attached to the sensor. Its axes rotate with the device.
+\end{itemize}
+
+At any instant, the orientation of $\mathcal{B}$ relative to $\mathcal{W}$ can
+be described by a rotation. Euler angles (roll~$\phi$, pitch~$\theta$,
+yaw~$\psi$) are intuitive but suffer from \emph{gimbal lock}---a singularity
+at $\theta = \pm 90°$ where one degree of freedom is lost. Quaternions
+avoid this problem entirely and are the representation we adopt in this work
+(Section~\ref{sec:quaternions}).
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{Yaw_Axis_Corrected.png}
+  \caption{The three Euler rotation axes illustrated on a rigid body.
+           \textbf{Roll}~($\phi$) is the rotation about the longitudinal axis,
+           \textbf{Pitch}~($\theta$) about the lateral axis, and
+           \textbf{Yaw}~($\psi$) about the vertical axis.
+           Any orientation of the body frame~$\mathcal{B}$ relative to the
+           world frame~$\mathcal{W}$ can be decomposed into a sequence of
+           these three rotations, though the representation is subject to
+           gimbal lock at $\theta = \pm 90°$.}
+  \label{fig:frames}
+\end{figure}
+
+\subsection{Accelerometer: Angle from Gravity Projection}
+\label{sec:frames:accel}
+
+\subsubsection{Sensor model}
+
+An ideal tri-axial accelerometer measures the \emph{specific force}
+experienced by the sensor, i.e.\ the difference between the true linear
+acceleration and gravity, expressed in the body frame:
+
+\begin{equation}
+  \mathbf{a}_b = R^{-1}\!\bigl(\mathbf{a}_\text{true} - \mathbf{g}\bigr)
+               + \mathbf{b}_a + \mathbf{n}_a
+  \label{eq:accel_model}
+\end{equation}
+
+\noindent where $R$ is the rotation matrix from $\mathcal{W}$ to $\mathcal{B}$,
+$\mathbf{g} = [0,\, 0,\, -g]^\top$ is the gravity vector in $\mathcal{W}$
+(with $g \approx 9.81~\text{m/s}^2$),
+$\mathbf{b}_a$ is a slowly varying bias, and $\mathbf{n}_a$ is additive white
+noise.
+
+\subsubsection{Angle derivation under static conditions}
+
+When the sensor is \textbf{stationary}
+($\mathbf{a}_\text{true} = \mathbf{0}$), Eq.~\eqref{eq:accel_model}
+simplifies to:
+
+\begin{equation}
+  \mathbf{a}_b \approx R^{-1}(-\mathbf{g})
+  \label{eq:accel_static}
+\end{equation}
+
+\noindent That is, the accelerometer reads only the projection of the gravity
+vector onto the three body axes. Because gravity is a known, constant vector,
+we can \emph{invert} this projection to recover the tilt of the sensor. We now
+derive the exact formulas using rotation matrices.
+
+\subsubsection{Formal derivation via rotation matrices}
+\label{sec:frames:accel:derivation}
+
+We model the accelerometer as a three-dimensional coordinate system
+$(x, y, z)$ that rotates with respect to a fixed Earth frame where gravity
+always points upward: $\mathbf{g} = [0,\; 0,\; g]^\top$ (with $z$ pointing up
+and $g \approx 9.81~\text{m/s}^2$).
+
+\paragraph{Step 1: Rotation matrices.}
+We define the elementary Tait-Bryan rotations. Roll ($\phi$) is a rotation
+about the $x$-axis, and pitch ($\theta$) is a rotation about the $y$-axis:
+
+\begin{equation}
+  R_x(\phi) = \begin{bmatrix}
+    1 & 0 & 0 \\
+    0 & \cos\phi & \sin\phi \\
+    0 & -\sin\phi & \cos\phi
+  \end{bmatrix}
+  \label{eq:Rx}
+\end{equation}
+
+\begin{equation}
+  R_y(\theta) = \begin{bmatrix}
+    \cos\theta & 0 & -\sin\theta \\
+    0 & 1 & 0 \\
+    \sin\theta & 0 & \cos\theta
+  \end{bmatrix}
+  \label{eq:Ry}
+\end{equation}
+
+When the sensor is at rest, the measured acceleration vector $\mathbf{a}_b =
+(A_x, A_y, A_z)^\top$ is the gravity vector transformed by the sensor's
+orientation:
+
+\begin{equation}
+  \begin{bmatrix} A_x \\ A_y \\ A_z \end{bmatrix}
+  = R_y(\theta)\;R_x(\phi)\;\begin{bmatrix} 0 \\ 0 \\ g \end{bmatrix}
+  \label{eq:accel_rotation}
+\end{equation}
+
+\paragraph{Step 2: Matrix multiplication.}
+We first apply $R_x(\phi)$ to the gravity vector:
+
+\begin{equation}
+  R_x(\phi)\begin{bmatrix} 0 \\ 0 \\ g \end{bmatrix}
+  = \begin{bmatrix} 0 \\ g\sin\phi \\ g\cos\phi \end{bmatrix}
+  \label{eq:Rx_g}
+\end{equation}
+
+\noindent Then we apply $R_y(\theta)$ to this result:
+
+\begin{equation}
+  R_y(\theta)\begin{bmatrix} 0 \\ g\sin\phi \\ g\cos\phi \end{bmatrix}
+  = \begin{bmatrix}
+      -g\sin\theta\cos\phi \\[2pt]
+      g\sin\phi \\[2pt]
+      g\cos\theta\cos\phi
+    \end{bmatrix}
+  \label{eq:Ry_Rx_g}
+\end{equation}
+
+\noindent Therefore, the three measured components are:
+
+\begin{align}
+  A_x &= -g\,\sin\theta\,\cos\phi \label{eq:Ax} \\
+  A_y &= \phantom{-}g\,\sin\phi \label{eq:Ay} \\
+  A_z &= \phantom{-}g\,\cos\theta\,\cos\phi \label{eq:Az}
+\end{align}
+
+\paragraph{Step 3: Solving for roll ($\phi$).}
+We divide Eq.~\eqref{eq:Ay} by Eq.~\eqref{eq:Az}:
+
+\begin{equation}
+  \frac{A_y}{A_z}
+  = \frac{g\,\sin\phi}{g\,\cos\theta\,\cos\phi}
+  \label{eq:roll_ratio}
+\end{equation}
+
+\noindent However, to obtain a result that is independent of $\theta$, we use
+the more robust form. Computing $\sqrt{A_x^2 + A_z^2}$:
+
+\begin{equation}
+  \sqrt{A_x^2 + A_z^2}
+  = g\,\cos\phi\,\sqrt{\sin^2\!\theta + \cos^2\!\theta}
+  = g\,\cos\phi
+  \label{eq:Axz_norm}
+\end{equation}
+
+\noindent Dividing $A_y$ by this result:
+
+\begin{equation}
+  \frac{A_y}{\sqrt{A_x^2 + A_z^2}}
+  = \frac{g\,\sin\phi}{g\,\cos\phi}
+  = \tan\phi
+\end{equation}
+
+\noindent Therefore:
+
+\begin{equation}
+  \boxed{\;\phi = \arctan\!\left(
+    \frac{A_y}{\sqrt{A_x^2 + A_z^2}}
+  \right)\;}
+  \label{eq:roll_accel}
+\end{equation}
+
+\paragraph{Step 4: Solving for pitch ($\theta$).}
+From Eq.~\eqref{eq:Ax}, we have $A_x = -g\,\sin\theta\,\cos\phi$. We need to
+relate $A_x$ to the remaining components. Squaring and summing $A_y$ and
+$A_z$:
+
+\begin{align}
+  A_y^2 + A_z^2
+    &= g^2\sin^2\!\phi + g^2\cos^2\!\theta\,\cos^2\!\phi \notag \\
+    &= g^2\cos^2\!\phi\bigl(\tan^2\!\phi + \cos^2\!\theta\bigr)
+  \label{eq:Ayz_sq}
+\end{align}
+
+\noindent For the standard Tait-Bryan decomposition where $|\theta| < 90°$,
+the simpler path uses the identity $\sin^2\!\phi + \cos^2\!\phi = 1$.
+Squaring Eqs.~\eqref{eq:Ay} and \eqref{eq:Az} directly:
+
+\begin{equation}
+  A_y^2 + A_z^2
+  = g^2\bigl(\sin^2\!\phi + \cos^2\!\theta\,\cos^2\!\phi\bigr)
+\end{equation}
+
+\noindent Noting that the full norm satisfies
+$A_x^2 + A_y^2 + A_z^2 = g^2$, we can write
+$\sqrt{A_y^2 + A_z^2} = g\,\cos\theta\;$ (valid when $\cos\phi \approx 1$ or
+by using the complete norm). Dividing $-A_x$ by this:
+
+\begin{equation}
+  \frac{-A_x}{\sqrt{A_y^2 + A_z^2}}
+  = \frac{g\,\sin\theta}{g\,\cos\theta}
+  = \tan\theta
+\end{equation}
+
+\noindent Therefore:
+
+\begin{equation}
+  \boxed{\;\theta = \arctan\!\left(
+    \frac{-A_x}{\sqrt{A_y^2 + A_z^2}}
+  \right)\;}
+  \label{eq:pitch_accel}
+\end{equation}
+
+\paragraph{Summary of the derivation.}
+The roll depends on the ratio between the $Y$-component and the plane formed
+by $X$ and $Z$; the pitch depends on the ratio between the $X$-component and
+the plane formed by $Y$ and $Z$. In both cases, the trigonometric functions
+from the rotation matrices cancel when dividing the appropriate components,
+yielding clean $\arctan$ expressions. Note that the \emph{yaw} ($\psi$)
+cannot be recovered: a rotation about the vertical axis leaves the gravity
+projection unchanged. Resolving yaw requires an additional sensor such as a
+magnetometer.
+
+\subsubsection{Limitation: sensitivity to dynamic motion}
+\label{sec:frames:accel:limitation}
+
+Equations~\eqref{eq:roll_accel}--\eqref{eq:pitch_accel} are exact only when
+$\mathbf{a}_\text{true} = \mathbf{0}$. As soon as the sensor undergoes
+\emph{any} acceleration---starting to move, changing direction, or
+vibrating---the accelerometer reading becomes the superposition of gravity and
+the dynamic acceleration:
+
+\begin{equation}
+  \mathbf{a}_b = R^{-1}\!\bigl(\mathbf{a}_\text{true} - \mathbf{g}\bigr)
+  \label{eq:accel_dynamic}
+\end{equation}
+
+\noindent In this regime, applying
+Eqs.~\eqref{eq:roll_accel}--\eqref{eq:pitch_accel} yields angles that are
+dominated by the dynamic term, rendering the estimate unreliable. The
+accelerometer is, in effect, a \textbf{low-frequency sensor for attitude}: its
+angle estimate is trustworthy when the sensor is at rest or moving at constant
+velocity, but \emph{loses all precision during transients} (acceleration,
+deceleration, vibration). Once the motion stabilises and the dynamic
+acceleration vanishes, the estimate recovers its reliability and converges
+back to the true tilt.
+
+% ----- FIGURE: accelerometer behaviour -----
+% TODO: Three-panel time-series plot:
+%   Panel 1: sensor at rest       → angle accurate, slightly noisy
+%   Panel 2: sensor accelerating  → angle wildly wrong
+%   Panel 3: sensor at rest again → angle recovers
+%
+% \begin{figure}[t]
+%   \centering
+%   \includegraphics[width=\columnwidth]{accel_behaviour.pdf}
+%   \caption{Accelerometer-derived tilt angle during three phases:
+%            \textbf{(a)}~stationary---accurate but noisy;
+%            \textbf{(b)}~dynamic motion---dominated by linear acceleration,
+%            estimate becomes unreliable;
+%            \textbf{(c)}~stationary again---recovers to the true value.}
+%   \label{fig:accel_behaviour}
+% \end{figure}
+
+
+\subsection{Gyroscope: Angle from Angular Velocity Integration}
+\label{sec:frames:gyro}
+
+\subsubsection{Sensor model}
+
+A tri-axial gyroscope measures the instantaneous angular velocity of
+$\mathcal{B}$ relative to $\mathcal{W}$, expressed in body-frame coordinates:
+
+\begin{equation}
+  \boldsymbol{\omega}_b = \boldsymbol{\omega}_\text{true}
+                        + \mathbf{b}_\omega + \mathbf{n}_\omega
+  \label{eq:gyro_model}
+\end{equation}
+
+\noindent where $\mathbf{b}_\omega$ is the gyroscope bias and
+$\mathbf{n}_\omega$ is white noise.
+
+\subsubsection{Angle derivation by integration}
+
+Because the gyroscope measures angular \emph{velocity}, the angle traversed
+around any axis is recovered by integration. For a single axis (e.g.\ roll),
+the continuous-time relation is:
+
+\begin{equation}
+  \phi(t) = \phi(t_0) + \int_{t_0}^{t} \omega_x(\tau)\,d\tau
+  \label{eq:gyro_angle_continuous}
+\end{equation}
+
+In practice, the sensor is sampled at a fixed rate $f_s = 1/\Delta t$, so the
+integral is approximated by a discrete sum. Using the simplest (rectangular)
+rule:
+
+\begin{equation}
+  \phi[n] = \phi[n-1] + \omega_x[n]\,\Delta t
+  \label{eq:gyro_angle_discrete}
+\end{equation}
+
+\noindent and analogously for pitch and yaw. The key strength of this approach
+is that the gyroscope is \textbf{insensitive to linear acceleration}: it
+responds only to rotations, making it highly accurate during dynamic motion
+when the accelerometer fails.
+
+\subsubsection{Limitation: cumulative drift}
+\label{sec:frames:gyro:drift}
+
+Equation~\eqref{eq:gyro_angle_discrete} reveals the fundamental weakness of
+pure gyroscope integration. At every time step, the measured angular velocity
+carries an error $\epsilon[n] = b_\omega + n_\omega[n]$ composed of the
+constant bias and a random noise sample. The integrated angle becomes:
+
+\begin{equation}
+  \phi[N] = \phi[0]
+           + \underbrace{\sum_{n=1}^{N} \omega_\text{true}[n]\,\Delta t}%
+             _{\text{true angle}}
+           + \underbrace{N\,b_\omega\,\Delta t}%
+             _{\text{bias drift}}
+           + \underbrace{\sum_{n=1}^{N} n_\omega[n]\,\Delta t}%
+             _{\text{random walk}}
+  \label{eq:gyro_drift}
+\end{equation}
+
+Two error terms are visible:
+
+\begin{enumerate}
+  \item \textbf{Bias drift.} The constant bias $b_\omega$ accumulates linearly
+        with each sample. After $N$ steps the error is $N\,b_\omega\,\Delta t
+        = b_\omega\,T$, where $T$ is the total elapsed time. This term grows
+        \emph{without bound}.
+  \item \textbf{Random walk.} The noise samples $n_\omega[n]$ are uncorrelated
+        with zero mean. Their cumulative effect has a standard deviation of
+        $\sigma_\omega\sqrt{\Delta t \cdot T}$ (angular random walk), where
+        $\sigma_\omega$ is the noise standard deviation. This grows as
+        $\sqrt{T}$---much slower than the bias drift. A full derivation is
+        given in Appendix~\ref{app:rw}.
+\end{enumerate}
+
+\subsubsection{Role of sampling frequency}
+
+The magnitude of the discretisation error (the difference between the true
+integral and the rectangular sum) depends on the time step $\Delta t$. For a
+smooth signal $\omega(t)$, the local truncation error per step is
+$\mathcal{O}(\Delta t^2)$, and the global accumulated error over a fixed
+interval $T = N\Delta t$ is:
+
+\begin{equation}
+  \epsilon_\text{disc} = \mathcal{O}(N \cdot \Delta t^2)
+                       = \mathcal{O}(\Delta t)
+  \label{eq:disc_error}
+\end{equation}
+
+\noindent Therefore, \textbf{increasing the sampling frequency}
+($\Delta t \to 0$) directly reduces the discretisation error. A sensor
+sampling at 200~Hz accumulates roughly half the discretisation error of one
+sampling at 100~Hz over the same time interval. However, no increase in
+sampling rate can eliminate the bias drift, which depends on $b_\omega$ and the
+total elapsed time, not on $\Delta t$.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{gyro_drift_errors.pdf}
+  \caption{Simulated gyroscope integration errors over 30~seconds
+           ($b_\omega = 0.05$~deg/s, $\sigma_\omega = 0.1$~deg/s,
+           $f_s = 100$~Hz).
+           \textbf{(a)}~Bias drift grows linearly with time.
+           \textbf{(b)}~Random walk is stochastic and grows as
+           $\sigma_\omega\sqrt{\Delta t \cdot T}$ (dashed $1\sigma$ envelope,
+           see Appendix~\ref{app:rw}).
+           \textbf{(c)}~Combined error: the bias drift dominates at
+           longer time scales.}
+  \label{fig:gyro_drift}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{gyro_sampling_comparison.pdf}
+  \caption{Effect of sampling frequency on gyroscope integration.
+           \textbf{Top:} integrated angle at 50~Hz and 200~Hz compared to
+           ground truth.
+           \textbf{Bottom:} accumulated error. Higher sampling rates
+           reduce discretisation error but cannot eliminate bias drift,
+           which depends only on $b_\omega$ and elapsed time~$T$.}
+  \label{fig:gyro_sampling}
+\end{figure}
+
+\subsection{Magnetometer: Heading from Earth's Magnetic Field}
+\label{sec:frames:mag}
+
+\subsubsection{Sensor model}
+
+A tri-axial magnetometer measures the Earth's magnetic field vector expressed
+in the body frame:
+
+\begin{equation}
+  \mathbf{m}_b = R^{-1}\,\mathbf{m}_w + \mathbf{b}_m + \mathbf{n}_m
+  \label{eq:mag_model}
+\end{equation}
+
+\noindent where $\mathbf{m}_w$ is the local geomagnetic field vector in the
+world frame, $R$ is the rotation matrix from $\mathcal{W}$ to $\mathcal{B}$,
+$\mathbf{b}_m$ is a bias term caused by hard-iron distortions (nearby
+ferromagnetic materials), and $\mathbf{n}_m$ is additive noise.
+
+In the ENU convention, the geomagnetic field has a horizontal component
+pointing approximately toward magnetic North (along $Y_w$) and a vertical
+component whose sign and magnitude depend on the latitude (the
+\emph{inclination} angle). At mid-latitudes, the field magnitude is typically
+$25$--$65~\mu$T.
+
+\subsubsection{Why the accelerometer cannot observe yaw}
+\label{sec:frames:mag:why}
+
+As derived in Section~\ref{sec:frames:accel:derivation}, the accelerometer
+measures the projection of the gravity vector onto the body axes. Gravity is
+a \emph{vertical} vector: $\mathbf{g} = [0,\;0,\;g]^\top$ in the world
+frame. A rotation about the vertical axis (yaw, $\psi$) leaves this vector
+\emph{invariant}:
+
+\begin{equation}
+  R_z(\psi)\,\mathbf{g}
+  = \begin{bmatrix}
+      \cos\psi & -\sin\psi & 0 \\
+      \sin\psi & \cos\psi  & 0 \\
+      0        & 0         & 1
+    \end{bmatrix}
+  \begin{bmatrix} 0 \\ 0 \\ g \end{bmatrix}
+  = \begin{bmatrix} 0 \\ 0 \\ g \end{bmatrix}
+  \label{eq:yaw_gravity_invariant}
+\end{equation}
+
+\noindent Regardless of the value of $\psi$, the accelerometer reading does
+not change. Therefore, \textbf{yaw is unobservable from gravity alone}.
+
+\paragraph{Important clarification: world yaw vs.\ body-axis rotation.}
+The unobservable degree of freedom is always the rotation about the
+\emph{world} vertical axis (the direction of~$\mathbf{g}$), not about the
+body-frame $Z_b$~axis. When the device is held horizontally---as in a
+drone---$Z_b$ is aligned with gravity, so a rotation about $Z_b$ coincides
+with world yaw and is entirely invisible to the accelerometer. However, when
+the device is tilted (e.g.\ a smartphone held upright), $Z_b$ is no longer
+parallel to~$\mathbf{g}$. In that configuration, a rotation about $Z_b$
+\emph{does} change the gravity projection and is therefore partially
+observable. Nevertheless, there remains exactly \textbf{one unobservable
+degree of freedom}---the rotation about the gravity vector---regardless of
+device orientation. It is this world-frame yaw that the magnetometer must
+resolve.
+
+This is the fundamental reason why a two-sensor (accelerometer + gyroscope)
+fusion pipeline cannot fully determine orientation: the gyroscope can track
+yaw changes in the short term, but its estimate drifts without any absolute
+reference to correct it.
+
+\subsubsection{Heading derivation from the magnetometer}
+\label{sec:frames:mag:heading}
+
+The Earth's magnetic field, unlike gravity, has a significant \emph{horizontal}
+component that changes direction with yaw rotations. To extract the heading
+angle, the magnetometer reading must first be \emph{tilt-compensated} using
+the known roll and pitch angles (obtained from the accelerometer or the
+complementary filter). The procedure is:
+
+\paragraph{Step 1: Tilt compensation.}
+Rotate the raw magnetometer vector from the (tilted) body frame into the
+horizontal plane using the inverse of the roll and pitch rotations:
+
+\begin{equation}
+  \begin{bmatrix} m_x' \\ m_y' \\ m_z' \end{bmatrix}
+  = R_x(-\phi)\;R_y(-\theta)\;
+  \begin{bmatrix} m_x \\ m_y \\ m_z \end{bmatrix}
+  \label{eq:tilt_compensation}
+\end{equation}
+
+\noindent Expanding the matrix product, the tilt-compensated horizontal
+components are:
+
+\begin{align}
+  m_x' &= m_x\cos\theta + m_y\sin\phi\sin\theta
+         + m_z\cos\phi\sin\theta
+  \label{eq:mx_comp} \\[4pt]
+  m_y' &= m_y\cos\phi - m_z\sin\phi
+  \label{eq:my_comp}
+\end{align}
+
+\paragraph{Step 2: Compute heading.}
+The yaw angle is the bearing of the horizontal magnetic component:
+
+\begin{equation}
+  \boxed{\;\psi = \arctan2\!\bigl(-m_x',\; m_y'\bigr)\;}
+  \label{eq:yaw_mag}
+\end{equation}
+
+\noindent The $\arctan2$ function returns a full-circle result in
+$(-180°, 180°]$, resolving the quadrant ambiguity. Note that
+$\psi = 0$ corresponds to magnetic North.
+
+\subsubsection{Limitations of the magnetometer}
+\label{sec:frames:mag:limitations}
+
+\begin{itemize}
+  \item \textbf{Soft- and hard-iron distortions.} Ferromagnetic materials
+        near the sensor (e.g.\ a phone case with a magnetic clasp, a metal
+        table) create constant offsets (hard-iron) or directional scaling
+        (soft-iron) that corrupt the reading. Calibration---typically an
+        ellipsoid fit---is required before use.
+  \item \textbf{Low bandwidth.} The geomagnetic field changes slowly;
+        consumer magnetometers are typically sampled at 50--100~Hz but the
+        useful signal content is below $\sim$\!1~Hz. High-frequency heading
+        changes are better tracked by the gyroscope.
+  \item \textbf{Indoor interference.} Electronic devices, power cables, and
+        reinforced-concrete structures generate local magnetic anomalies that
+        can cause heading errors of tens of degrees.
+\end{itemize}
+
+\noindent Despite these limitations, the magnetometer is the \emph{only}
+passive sensor available on a consumer device that provides an absolute
+heading reference. Its role in the fusion pipeline is strictly analogous to
+that of the accelerometer for tilt: it supplies a low-frequency, drift-free
+yaw reference that is fused with the high-frequency gyroscope estimate via
+the complementary filter.
+
+\subsection{The Need for Fusion}
+\label{sec:frames:fusion_need}
+
+The preceding analysis reveals a natural complementarity among the three
+sensors, summarised in Table~\ref{tab:sensor_comparison}:
+
+\begin{itemize}
+  \item The \textbf{accelerometer} provides an absolute tilt reference
+        (gravity) that is \emph{bounded} in error---it never drifts---but is
+        only valid when the sensor is at rest or in uniform motion.
+        During transients it is unreliable; once the motion ends, it
+        \emph{recovers}. It \emph{cannot} observe yaw.
+  \item The \textbf{magnetometer} provides an absolute heading reference
+        (Earth's magnetic field) that is also bounded in error and
+        self-correcting, but is sensitive to local magnetic disturbances and
+        has low bandwidth.
+  \item The \textbf{gyroscope} tracks rotations on \emph{all three axes}
+        faithfully during fast, dynamic motion, but its integrated angle
+        \emph{drifts without bound} due to bias accumulation. It never
+        self-corrects.
+\end{itemize}
+
+\noindent In the frequency domain, the accelerometer and magnetometer are
+reliable \emph{low-frequency} sources (slow, steady orientation on
+tilt and heading respectively), while the gyroscope is a reliable
+\emph{high-frequency} source (fast changes on all axes). A well-designed
+fusion algorithm should retain the low-frequency content of the absolute
+sensors and the high-frequency content of the gyroscope, discarding the
+noisy high-frequency accelerometer/magnetometer data and the drifting
+low-frequency gyroscope data. This is precisely what the complementary
+filter achieves (Section~\ref{sec:complementary_filter}).
+
+\begin{table}[t]
+  \centering
+  \caption{Complementary characteristics of the three sensors for
+           full attitude estimation.}
+  \label{tab:sensor_comparison}
+  \resizebox{\columnwidth}{!}{%
+  \begin{tabular}{@{}lccc@{}}
+    \toprule
+    \textbf{Property} & \textbf{Accel.} & \textbf{Magnet.} & \textbf{Gyro.} \\
+    \midrule
+    Measures            & Specific force  & Magnetic field    & Angular vel.    \\
+    Provides            & Roll, Pitch     & Yaw (heading)     & Roll, Pitch, Yaw \\
+    Angle via           & Trigonometry    & $\arctan2$        & Integration     \\
+    Low-freq.\ acc.     & High (gravity)  & High (mag.\ field)& Low (drift)     \\
+    High-freq.\ acc.    & Low (dyn.\ acc.)& Low (noise)       & High            \\
+    Absolute ref.       & Yes             & Yes               & No              \\
+    Affected by motion  & Yes             & No                & No              \\
+    Affected by env.    & No              & Yes (mag.\ anom.) & No              \\
+    Drift               & None (bounded)  & None (bounded)    & Unbounded       \\
+    Self-correcting     & Yes             & Yes               & No              \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table}
+
+% ----- FIGURE: sensor summary -----
+% TODO: Side-by-side qualitative comparison:
+%   Left panel  - "Accelerometer angle": noisy around true value,
+%                  spikes during motion, returns after.
+%   Right panel - "Gyroscope angle": smooth, tracks true value initially,
+%                  but slowly diverges (drift).
+%   Annotation:  arrow pointing to "fusion zone" where both contribute.
+%
+% \begin{figure}[t]
+%   \centering
+%   \includegraphics[width=\columnwidth]{sensor_summary.pdf}
+%   \caption{Qualitative comparison of angle estimates.
+%            \textbf{Left:} the accelerometer is accurate at rest but
+%            corrupted during motion; it always recovers.
+%            \textbf{Right:} the gyroscope is smooth and responsive but
+%            drifts indefinitely. Fusing both yields the best of each.}
+%   \label{fig:sensor_summary}
+% \end{figure}

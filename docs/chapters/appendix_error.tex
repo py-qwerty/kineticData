@@ -1,0 +1,364 @@
+\appendix
+
+\section{Derivation of Gyroscope Integration Error Bounds}
+\label{app:error_bounds}
+
+This appendix provides a rigorous derivation of the three error terms that
+arise when numerically integrating a gyroscope signal: bias drift, angular
+random walk, and discretisation error. These results underpin the theoretical
+envelopes shown in Figs.~\ref{fig:gyro_drift} and~\ref{fig:gyro_sampling}.
+
+% ===================================================================
+\subsection{Setup and Notation}
+\label{app:setup}
+
+Consider a single-axis gyroscope sampled at frequency $f_s = 1/\Delta t$.
+At each time step $n$, the measured angular velocity is:
+
+\begin{equation}
+  \omega[n] = \omega_\text{true}[n] + b_\omega + n_\omega[n]
+  \label{eq:app:gyro_model}
+\end{equation}
+
+\noindent where:
+\begin{itemize}
+  \item $\omega_\text{true}[n]$ is the true angular velocity,
+  \item $b_\omega$ is a constant bias (deg/s),
+  \item $n_\omega[n]$ are independent and identically distributed (i.i.d.)
+        random variables with $E[n_\omega[n]] = 0$ and
+        $\text{Var}[n_\omega[n]] = \sigma_\omega^2$.
+\end{itemize}
+
+The angle is estimated by rectangular (Euler) integration:
+
+\begin{equation}
+  \hat{\theta}[N] = \sum_{n=1}^{N} \omega[n]\,\Delta t
+  \label{eq:app:integration}
+\end{equation}
+
+\noindent while the true angle is:
+
+\begin{equation}
+  \theta_\text{true}[N] = \sum_{n=1}^{N} \omega_\text{true}[n]\,\Delta t
+  \label{eq:app:true_angle}
+\end{equation}
+
+The total error is the difference:
+
+\begin{equation}
+  \epsilon[N] = \hat{\theta}[N] - \theta_\text{true}[N]
+              = \sum_{n=1}^{N} \bigl(b_\omega + n_\omega[n]\bigr)\,\Delta t
+  \label{eq:app:total_error}
+\end{equation}
+
+\noindent We can separate this into two independent terms:
+
+\begin{equation}
+  \epsilon[N]
+  = \underbrace{\sum_{n=1}^{N} b_\omega\,\Delta t}_{\epsilon_\text{bias}[N]}
+  + \underbrace{\sum_{n=1}^{N} n_\omega[n]\,\Delta t}_{\epsilon_\text{rw}[N]}
+  \label{eq:app:error_split}
+\end{equation}
+
+% ===================================================================
+\subsection{Bias Drift: $\epsilon_\text{bias}$}
+\label{app:bias}
+
+Since $b_\omega$ is constant, the sum is trivial:
+
+\begin{equation}
+  \epsilon_\text{bias}[N]
+  = \sum_{n=1}^{N} b_\omega\,\Delta t
+  = N \cdot b_\omega \cdot \Delta t
+  \label{eq:app:bias_sum}
+\end{equation}
+
+\noindent Substituting $T = N\,\Delta t$ (total elapsed time):
+
+\begin{equation}
+  \boxed{\;\epsilon_\text{bias} = b_\omega \cdot T\;}
+  \label{eq:app:bias_final}
+\end{equation}
+
+\paragraph{Properties.}
+\begin{itemize}
+  \item \textbf{Deterministic}: the bias drift is the same in every
+        realisation of the experiment.
+  \item \textbf{Linear in time}: doubling the measurement duration doubles
+        the error.
+  \item \textbf{Independent of $\Delta t$}: for a fixed total time $T$,
+        changing the sampling frequency does not affect the bias drift.
+        This is because $N \cdot \Delta t = T$ regardless of how we
+        partition the interval.
+\end{itemize}
+
+% ===================================================================
+\subsection{Angular Random Walk: $\epsilon_\text{rw}$}
+\label{app:rw}
+
+This is the stochastic term and requires a careful probabilistic analysis.
+
+\subsubsection{Step 1: Write the sum explicitly}
+
+\begin{equation}
+  \epsilon_\text{rw}[N]
+  = \sum_{n=1}^{N} n_\omega[n]\,\Delta t
+  = \Delta t \sum_{n=1}^{N} n_\omega[n]
+  \label{eq:app:rw_sum}
+\end{equation}
+
+\subsubsection{Step 2: Compute the expected value (mean)}
+
+Since $E[n_\omega[n]] = 0$ for all $n$, and expectation is linear:
+
+\begin{align}
+  E\bigl[\epsilon_\text{rw}[N]\bigr]
+  &= \Delta t \sum_{n=1}^{N} E[n_\omega[n]] \notag \\
+  &= \Delta t \sum_{n=1}^{N} 0 \notag \\
+  &= 0
+  \label{eq:app:rw_mean}
+\end{align}
+
+\noindent The random walk has zero mean---it does not favour any direction on
+average.
+
+\subsubsection{Step 3: Compute the variance}
+
+The variance of a sum of \emph{independent} random variables equals the sum of
+their variances. This is the key property we exploit. Since $n_\omega[n]$ are
+i.i.d.:
+
+\begin{align}
+  \text{Var}\bigl[\epsilon_\text{rw}[N]\bigr]
+  &= \text{Var}\!\left[\Delta t \sum_{n=1}^{N} n_\omega[n]\right] \notag \\[6pt]
+  &= \Delta t^2 \;\text{Var}\!\left[\sum_{n=1}^{N} n_\omega[n]\right]
+  \label{eq:app:rw_var_step1}
+\end{align}
+
+\noindent where we used the property $\text{Var}[cX] = c^2\,\text{Var}[X]$ to
+pull out the constant $\Delta t^2$. Now, for independent variables:
+
+\begin{align}
+  \text{Var}\!\left[\sum_{n=1}^{N} n_\omega[n]\right]
+  &= \sum_{n=1}^{N} \text{Var}[n_\omega[n]] \notag \\[4pt]
+  &= \sum_{n=1}^{N} \sigma_\omega^2 \notag \\[4pt]
+  &= N\,\sigma_\omega^2
+  \label{eq:app:rw_var_step2}
+\end{align}
+
+\noindent Substituting into Eq.~\eqref{eq:app:rw_var_step1}:
+
+\begin{equation}
+  \text{Var}\bigl[\epsilon_\text{rw}[N]\bigr]
+  = \Delta t^2 \cdot N \cdot \sigma_\omega^2
+  = N\,\Delta t^2\,\sigma_\omega^2
+  \label{eq:app:rw_variance}
+\end{equation}
+
+\subsubsection{Step 4: Compute the standard deviation}
+
+The standard deviation (the ``1-sigma envelope'') is the square root of the
+variance:
+
+\begin{equation}
+  \sigma_{\epsilon_\text{rw}}
+  = \sqrt{N\,\Delta t^2\,\sigma_\omega^2}
+  = \sigma_\omega\,\Delta t\,\sqrt{N}
+  \label{eq:app:rw_std_N}
+\end{equation}
+
+\subsubsection{Step 5: Express in terms of physical quantities}
+
+Substituting $N = T / \Delta t$:
+
+\begin{align}
+  \sigma_{\epsilon_\text{rw}}
+  &= \sigma_\omega\,\Delta t\,\sqrt{\frac{T}{\Delta t}} \notag \\[6pt]
+  &= \sigma_\omega\,\Delta t \cdot \frac{\sqrt{T}}{\sqrt{\Delta t}} \notag \\[6pt]
+  &= \sigma_\omega\,\sqrt{\Delta t}\,\sqrt{T} \notag \\[6pt]
+  &= \sigma_\omega\,\sqrt{\Delta t \cdot T}
+  \label{eq:app:rw_std_derivation}
+\end{align}
+
+\begin{equation}
+  \boxed{\;\sigma_{\epsilon_\text{rw}}
+  = \sigma_\omega\,\sqrt{\Delta t \cdot T}\;}
+  \label{eq:app:rw_final}
+\end{equation}
+
+\paragraph{Interpretation.}
+\begin{itemize}
+  \item The standard deviation grows as $\sqrt{T}$---much slower than the
+        linear bias drift. This is the hallmark of a \emph{random walk}.
+  \item Unlike the bias drift, the random walk \emph{does} depend on
+        $\Delta t$: a higher sampling frequency (smaller $\Delta t$) yields a
+        \emph{smaller} random walk, because each noise sample is multiplied by
+        a smaller time step before being accumulated.
+  \item The $\pm 1\sigma$ envelope contains approximately 68\% of the
+        realisations (assuming Gaussian noise). The $\pm 2\sigma$ envelope
+        contains $\sim$95\%.
+\end{itemize}
+
+\subsubsection{Relation to the Angular Random Walk coefficient}
+
+In sensor datasheets, manufacturers report the \emph{Angular Random Walk}
+(ARW) coefficient, defined as:
+
+\begin{equation}
+  \sigma_\text{ARW} = \sigma_\omega\,\sqrt{\Delta t}
+  = \frac{\sigma_\omega}{\sqrt{f_s}}
+  \qquad \text{(units: deg/}\sqrt{\text{s}}\text{)}
+  \label{eq:app:arw_def}
+\end{equation}
+
+\noindent so that Eq.~\eqref{eq:app:rw_final} simplifies to:
+
+\begin{equation}
+  \sigma_{\epsilon_\text{rw}} = \sigma_\text{ARW}\,\sqrt{T}
+  \label{eq:app:arw_simple}
+\end{equation}
+
+\noindent This compact form is commonly used in inertial navigation literature.
+
+% ===================================================================
+\subsection{Discretisation Error}
+\label{app:disc}
+
+Even if the gyroscope were \emph{perfect} ($b_\omega = 0$,
+$\sigma_\omega = 0$), a third error arises from approximating a continuous
+integral with a discrete sum. We derive its order using Taylor expansion.
+
+\subsubsection{Step 1: Local truncation error}
+
+The true integral over one time step is:
+
+\begin{equation}
+  \int_{t_n}^{t_n + \Delta t} \omega(\tau)\,d\tau
+  \label{eq:app:true_step}
+\end{equation}
+
+\noindent The rectangular (Euler) rule approximates this as
+$\omega(t_n)\,\Delta t$. Expanding $\omega(\tau)$ in a Taylor series around
+$t_n$:
+
+\begin{equation}
+  \omega(\tau) = \omega(t_n) + \dot{\omega}(t_n)(\tau - t_n)
+              + \mathcal{O}\bigl((\tau - t_n)^2\bigr)
+  \label{eq:app:taylor}
+\end{equation}
+
+\noindent Integrating from $t_n$ to $t_n + \Delta t$:
+
+\begin{align}
+  \int_{t_n}^{t_n + \Delta t} \omega(\tau)\,d\tau
+  &= \omega(t_n)\,\Delta t
+   + \dot{\omega}(t_n)\,\frac{\Delta t^2}{2}
+   + \mathcal{O}(\Delta t^3) \notag \\[6pt]
+  &= \underbrace{\omega(t_n)\,\Delta t}_{\text{Euler approx.}}
+   + \underbrace{\dot{\omega}(t_n)\,\frac{\Delta t^2}{2}
+   + \mathcal{O}(\Delta t^3)}_{\text{local truncation error}}
+  \label{eq:app:local_error}
+\end{align}
+
+\noindent Therefore, the local truncation error per step is:
+
+\begin{equation}
+  e_\text{local} = \dot{\omega}(t_n)\,\frac{\Delta t^2}{2}
+                 = \mathcal{O}(\Delta t^2)
+  \label{eq:app:local_order}
+\end{equation}
+
+\subsubsection{Step 2: Global accumulated error}
+
+Over $N = T/\Delta t$ steps, the errors accumulate:
+
+\begin{align}
+  \epsilon_\text{disc}
+  &= \sum_{n=1}^{N} e_\text{local}[n] \notag \\[4pt]
+  &= \sum_{n=1}^{N} \mathcal{O}(\Delta t^2) \notag \\[4pt]
+  &= N \cdot \mathcal{O}(\Delta t^2) \notag \\[4pt]
+  &= \frac{T}{\Delta t} \cdot \mathcal{O}(\Delta t^2)
+  \label{eq:app:global_derivation}
+\end{align}
+
+\begin{equation}
+  \boxed{\;\epsilon_\text{disc} = \mathcal{O}(\Delta t)\;}
+  \label{eq:app:disc_final}
+\end{equation}
+
+\paragraph{Interpretation.}
+\begin{itemize}
+  \item The global discretisation error is \textbf{first-order} in $\Delta t$.
+        Halving the time step (doubling the sampling frequency) halves this
+        error.
+  \item For a sensor sampling at $f_s = 100$~Hz ($\Delta t = 0.01$~s), this
+        error is typically very small compared to the bias drift, which is why
+        increasing the sampling rate has a marginal effect in practice.
+\end{itemize}
+
+% ===================================================================
+\subsection{Complete Error Budget}
+\label{app:budget}
+
+Combining all three terms, the total angle error after time $T$ is:
+
+\begin{equation}
+  \epsilon_\text{total}(T)
+  = \underbrace{b_\omega \cdot T\vphantom{\sqrt{}}}_{\text{bias drift}}
+  + \underbrace{\sigma_\omega\sqrt{\Delta t \cdot T}}_{\text{random walk (stochastic)}}
+  + \underbrace{\mathcal{O}(\Delta t)}_{\text{discretisation}}
+  \label{eq:app:total_budget}
+\end{equation}
+
+\noindent Table~\ref{tab:app:error_comparison} compares the scaling of each
+term with respect to both elapsed time~$T$ and sampling interval~$\Delta t$.
+
+\begin{table}[h]
+  \centering
+  \caption{Scaling of the three gyroscope integration error terms.}
+  \label{tab:app:error_comparison}
+  \begin{tabular}{@{}lccc@{}}
+    \toprule
+    \textbf{Error term}
+      & \textbf{Grows with $T$}
+      & \textbf{Depends on $\Delta t$?}
+      & \textbf{Dominant?} \\
+    \midrule
+    Bias drift
+      & $\propto T$ (linear)
+      & No
+      & Yes (long term) \\
+    Random walk
+      & $\propto \sqrt{T}$
+      & Yes ($\propto \sqrt{\Delta t}$)
+      & Medium \\
+    Discretisation
+      & Fixed for fixed $T$
+      & Yes ($\propto \Delta t$)
+      & Negligible \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Numerical example.}
+For a typical MEMS gyroscope with $b_\omega = 0.05$~deg/s,
+$\sigma_\omega = 0.1$~deg/s, at $f_s = 100$~Hz ($\Delta t = 0.01$~s):
+
+\begin{center}
+\begin{tabular}{@{}lcccc@{}}
+  \toprule
+  & $T = 1$~s & $T = 10$~s & $T = 60$~s & $T = 300$~s \\
+  \midrule
+  $\epsilon_\text{bias}$
+    & $0.05°$ & $0.50°$ & $3.00°$ & $15.00°$ \\
+  $\sigma_{\epsilon_\text{rw}}$
+    & $0.01°$ & $0.03°$ & $0.08°$ & $0.17°$ \\
+  Ratio (bias/rw)
+    & $5\times$ & $16\times$ & $39\times$ & $87\times$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The bias drift dominates increasingly with time: after 5~minutes the
+bias error is 87 times larger than the random walk. This justifies the use of
+external corrections (complementary filter, ZUPT) to bound the drift.

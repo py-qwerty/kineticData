@@ -1,0 +1,317 @@
+\section{Quaternion Algebra}
+\label{sec:quaternions}
+
+% ----------------------------------------------------------------
+% 7 subsections: motivation, definition, rotation proof,
+% geometric interpretation, rotation matrix, integration, advantages.
+% ----------------------------------------------------------------
+
+% ============================================================
+%  3.1  Motivation: rotations as numbers
+% ============================================================
+\subsection{Motivation: Rotations as Numbers}
+\label{sec:quat:motivation}
+
+Before introducing quaternions, it is instructive to recall how
+\emph{complex numbers} encode rotations in two dimensions.  A point
+$(x,y)\in\mathbb{R}^2$ can be identified with the complex number
+$z = x + iy$.  Multiplying $z$ by the unit complex number
+$e^{i\theta} = \cos\theta + i\sin\theta$ yields
+
+\begin{equation}
+  z' \;=\; e^{i\theta}\,z
+     \;=\; (x\cos\theta - y\sin\theta)
+          + i\,(x\sin\theta + y\cos\theta),
+  \label{eq:complex_rotation}
+\end{equation}
+
+\noindent which is exactly the rotation of $(x,y)$ by an angle $\theta$.
+For example, rotating the point $(1,0)$ by $90^\circ$ amounts to multiplying
+$z=1$ by $e^{i\pi/2} = i$, which gives $z'= i$, corresponding to the
+point $(0,1)$---precisely the expected result.
+
+A natural question arises: \emph{does an analogous number system exist
+for rotations in $\mathbb{R}^3$?}  One might expect that three imaginary
+units suffice, but William Rowan Hamilton showed in 1843 that a consistent
+non-commutative algebra requires \textbf{four} components---one real and
+three imaginary---giving rise to the \emph{quaternions}
+$\mathbb{H} = \{q_w + q_x\mathbf{i} + q_y\mathbf{j} + q_z\mathbf{k}\}$.
+Just as the unit complex numbers $e^{i\theta}$ parametrise $\mathrm{SO}(2)$,
+the unit quaternions provide a double cover of $\mathrm{SO}(3)$: every
+rotation in three-dimensional space can be expressed as a quaternion
+conjugation, as we shall demonstrate in the following subsections.
+
+% ============================================================
+%  3.2  Definition and operations  (existing content, preserved)
+% ============================================================
+\subsection{Definition and Key Operations}
+\label{sec:quat:def}
+
+A quaternion $\mathbf{q}$ is a four-dimensional hypercomplex number:
+
+\begin{equation}
+  \mathbf{q} = q_w + q_x\,\mathbf{i} + q_y\,\mathbf{j} + q_z\,\mathbf{k}
+             = \begin{bmatrix} q_w \\ q_x \\ q_y \\ q_z \end{bmatrix}
+  \label{eq:quat_def}
+\end{equation}
+
+\noindent where $q_w$ is the \emph{scalar} (or real) part and
+$(q_x, q_y, q_z)$ is the \emph{vector} (or imaginary) part. The basis
+elements satisfy the fundamental relations $\mathbf{i}^2 = \mathbf{j}^2 =
+\mathbf{k}^2 = \mathbf{i}\mathbf{j}\mathbf{k} = -1$.
+
+\paragraph{Norm.}
+$\|\mathbf{q}\| = \sqrt{q_w^2 + q_x^2 + q_y^2 + q_z^2}$.
+A \emph{unit quaternion} satisfies $\|\mathbf{q}\| = 1$.
+
+\paragraph{Conjugate.}
+$\mathbf{q}^* = q_w - q_x\,\mathbf{i} - q_y\,\mathbf{j} - q_z\,\mathbf{k}$.
+For unit quaternions, $\mathbf{q}^* = \mathbf{q}^{-1}$.
+
+\paragraph{Hamilton product.}
+Given $\mathbf{p} = (p_w, p_x, p_y, p_z)$ and
+$\mathbf{q} = (q_w, q_x, q_y, q_z)$, their product $\mathbf{r} =
+\mathbf{p} \otimes \mathbf{q}$ is:
+
+\begin{equation}
+  \mathbf{r} = \begin{bmatrix}
+    p_w q_w - p_x q_x - p_y q_y - p_z q_z \\
+    p_w q_x + p_x q_w + p_y q_z - p_z q_y \\
+    p_w q_y - p_x q_z + p_y q_w + p_z q_x \\
+    p_w q_z + p_x q_y - p_y q_x + p_z q_w
+  \end{bmatrix}^\top
+  \label{eq:hamilton}
+\end{equation}
+
+\noindent Note that the Hamilton product is \emph{not} commutative:
+$\mathbf{p} \otimes \mathbf{q} \neq \mathbf{q} \otimes \mathbf{p}$ in general.
+
+% ============================================================
+%  3.3  Unit quaternion as a rotation in R^3  (rewritten)
+% ============================================================
+\subsection{The Unit Quaternion as a Rotation in $\mathbb{R}^3$}
+\label{sec:quat:rotation}
+
+A unit quaternion $\mathbf{q}$ encodes a rotation by angle~$\theta$ about a
+unit axis~$\hat{\mathbf{u}}$:
+
+\begin{equation}
+  \mathbf{q} = \cos\frac{\theta}{2}
+             + \sin\frac{\theta}{2}\,
+               (u_x\,\mathbf{i} + u_y\,\mathbf{j} + u_z\,\mathbf{k})
+  \label{eq:axis_angle}
+\end{equation}
+
+To rotate a vector $\mathbf{v} \in \mathbb{R}^3$, we embed it as a pure
+quaternion $\mathbf{v}_q = (0, v_x, v_y, v_z)$ and compute:
+
+\begin{equation}
+  \mathbf{v}'_q = \mathbf{q} \otimes \mathbf{v}_q \otimes \mathbf{q}^*
+  \label{eq:rotation}
+\end{equation}
+
+\noindent The vector part of $\mathbf{v}'_q$ is the rotated vector
+$\mathbf{v}' \in \mathbb{R}^3$.  We now prove that this conjugation is
+indeed a rotation---that is, an element of $\mathrm{SO}(3)$.
+
+\paragraph{Preservation of norms.}
+The norm of a quaternion product satisfies
+$\|\mathbf{p}\otimes\mathbf{q}\| = \|\mathbf{p}\|\,\|\mathbf{q}\|$.
+Since $\|\mathbf{q}\|=\|\mathbf{q}^*\|=1$, we obtain
+\begin{equation}
+  \|\mathbf{v}'_q\|
+  = \|\mathbf{q}\otimes\mathbf{v}_q\otimes\mathbf{q}^*\|
+  = \|\mathbf{q}\|\;\|\mathbf{v}_q\|\;\|\mathbf{q}^*\|
+  = \|\mathbf{v}_q\|,
+  \label{eq:norm_preservation}
+\end{equation}
+so the map preserves the length of every vector.
+
+\paragraph{Linearity.}
+For any scalars $\alpha,\beta\in\mathbb{R}$ and pure quaternions
+$\mathbf{v}_q,\mathbf{w}_q$:
+\begin{equation}
+  \mathbf{q}\otimes(\alpha\mathbf{v}_q+\beta\mathbf{w}_q)\otimes\mathbf{q}^*
+  = \alpha\,(\mathbf{q}\otimes\mathbf{v}_q\otimes\mathbf{q}^*)
+  + \beta\,(\mathbf{q}\otimes\mathbf{w}_q\otimes\mathbf{q}^*),
+  \label{eq:linearity}
+\end{equation}
+which follows from the bilinearity of the Hamilton product.  Hence the map
+$\mathbf{v}\mapsto\mathbf{q}\otimes\mathbf{v}_q\otimes\mathbf{q}^*$
+defines a linear transformation $\mathbb{R}^3\to\mathbb{R}^3$.
+
+\paragraph{Preservation of orientation.}
+A norm-preserving linear map is an \emph{orthogonal} transformation, so
+its determinant is $\pm 1$.  Because the set of unit quaternions is
+connected (it is the 3-sphere $S^3$) and $\mathbf{q}=1$ (the identity
+quaternion) produces the identity map with $\det=+1$, and the determinant
+is a continuous function of $\mathbf{q}$, we conclude that
+$\det=+1$ for \emph{every} unit quaternion.  Therefore the conjugation
+in~\eqref{eq:rotation} is a \textbf{proper rotation}, i.e.\ an element
+of $\mathrm{SO}(3)$.
+
+% ============================================================
+%  3.4  Geometric interpretation: parallel/perpendicular decomposition
+% ============================================================
+\subsection{Geometric Interpretation}
+\label{sec:quat:geometry}
+
+The proof above establishes \emph{that} the conjugation is a rotation.
+We now show \emph{how} it acts geometrically, which also explains the
+factor $\theta/2$ in the quaternion parametrisation.
+
+Let $\hat{\mathbf{u}}$ be the rotation axis and decompose an arbitrary
+vector $\mathbf{v}$ into its parallel and perpendicular components with
+respect to $\hat{\mathbf{u}}$:
+\begin{equation}
+  \mathbf{v} = \mathbf{v}_\parallel + \mathbf{v}_\perp,
+  \qquad
+  \mathbf{v}_\parallel = (\mathbf{v}\cdot\hat{\mathbf{u}})\,\hat{\mathbf{u}},
+  \qquad
+  \mathbf{v}_\perp = \mathbf{v} - \mathbf{v}_\parallel.
+  \label{eq:decomposition}
+\end{equation}
+
+\paragraph{Parallel component is invariant.}
+Because $\mathbf{v}_\parallel$ is collinear with $\hat{\mathbf{u}}$, and
+$\hat{\mathbf{u}}$ commutes with every quaternion whose vector part is
+proportional to $\hat{\mathbf{u}}$ (in particular with
+$\mathbf{q}=\cos(\theta/2)+\sin(\theta/2)\,\hat{\mathbf{u}}$), we have:
+\begin{equation}
+  \mathbf{q}\otimes(\mathbf{v}_\parallel)_q\otimes\mathbf{q}^*
+  = (\mathbf{v}_\parallel)_q.
+  \label{eq:parallel_invariant}
+\end{equation}
+In other words, the component along the rotation axis is unchanged.
+
+\paragraph{Perpendicular component is rotated by $\theta$.}
+For the perpendicular component, the double-sided multiplication produces:
+\begin{equation}
+  \mathbf{q}\otimes(\mathbf{v}_\perp)_q\otimes\mathbf{q}^*
+  = \cos\theta\;\mathbf{v}_\perp
+  + \sin\theta\;(\hat{\mathbf{u}}\times\mathbf{v}_\perp),
+  \label{eq:perp_rotation}
+\end{equation}
+which is Rodrigues' rotation formula restricted to vectors orthogonal
+to the axis.  The key insight is that \emph{each} multiplication by
+$\mathbf{q}$ or $\mathbf{q}^*$ contributes a half-angle rotation, so the
+two multiplications together produce the full angle~$\theta$.  This is
+precisely why the quaternion uses $\theta/2$ rather than $\theta$: the
+\textbf{double-sided conjugation doubles the angle}.
+
+Combining both components, we recover Rodrigues' formula for an arbitrary
+vector:
+\begin{equation}
+  \mathbf{v}' = \cos\theta\;\mathbf{v}
+              + (1-\cos\theta)\,(\mathbf{v}\cdot\hat{\mathbf{u}})\,\hat{\mathbf{u}}
+              + \sin\theta\;(\hat{\mathbf{u}}\times\mathbf{v}).
+  \label{eq:rodrigues}
+\end{equation}
+
+% ============================================================
+%  3.5  Equivalence with the rotation matrix R(q)
+% ============================================================
+\subsection{Equivalence with the Rotation Matrix}
+\label{sec:quat:matrix}
+
+By expanding the conjugation
+$\mathbf{q}\otimes\mathbf{v}_q\otimes\mathbf{q}^*$ component by component
+using the Hamilton product~\eqref{eq:hamilton} and grouping terms in
+$v_x$, $v_y$, $v_z$, one obtains the equivalent matrix form
+$\mathbf{v}' = R(\mathbf{q})\,\mathbf{v}$, where:
+
+\begin{equation}
+  R(\mathbf{q}) = \begin{bmatrix}
+    1 - 2(q_y^2+q_z^2)  & 2(q_x q_y - q_w q_z)  & 2(q_x q_z + q_w q_y) \\[4pt]
+    2(q_x q_y + q_w q_z) & 1 - 2(q_x^2+q_z^2)    & 2(q_y q_z - q_w q_x) \\[4pt]
+    2(q_x q_z - q_w q_y) & 2(q_y q_z + q_w q_x)   & 1 - 2(q_x^2+q_y^2)
+  \end{bmatrix}
+  \label{eq:rotation_matrix}
+\end{equation}
+
+\noindent This matrix is used whenever an explicit $3\times 3$ rotation is
+needed---for instance, to project accelerometer readings into the world
+frame.
+
+\paragraph{Verification.}
+One can verify that $R(\mathbf{q})$ is orthogonal and proper:
+\begin{enumerate}
+  \item \textbf{Orthogonality}: $R(\mathbf{q})^\top R(\mathbf{q}) = I$,
+    which follows from the unit-norm constraint $q_w^2+q_x^2+q_y^2+q_z^2=1$.
+  \item \textbf{Unit determinant}: $\det R(\mathbf{q}) = +1$, confirming
+    that $R(\mathbf{q})\in\mathrm{SO}(3)$.
+\end{enumerate}
+
+\noindent Note that $\mathbf{q}$ and $-\mathbf{q}$ yield the same
+rotation matrix $R(\mathbf{q}) = R(-\mathbf{q})$, reflecting the
+\emph{double cover} of $\mathrm{SO}(3)$ by the unit quaternions.
+
+% ============================================================
+%  3.6  Integration from angular velocity  (existing content, preserved)
+% ============================================================
+\subsection{Quaternion Integration from Angular Velocity}
+\label{sec:quat:integration}
+
+Given the current orientation quaternion $\mathbf{q}(t)$ and a gyroscope
+reading $\boldsymbol{\omega}_b = (\omega_x, \omega_y, \omega_z)$, the
+orientation evolves according to the differential equation:
+
+\begin{equation}
+  \dot{\mathbf{q}}(t) = \frac{1}{2}\,\mathbf{q}(t) \otimes
+  \boldsymbol{\omega}_q
+  \label{eq:quat_diff}
+\end{equation}
+
+\noindent where $\boldsymbol{\omega}_q = (0, \omega_x, \omega_y, \omega_z)$ is
+the angular velocity expressed as a pure quaternion. Using a first-order
+discretisation with time step~$\Delta t$:
+
+\begin{equation}
+  \mathbf{q}(t + \Delta t) = \mathbf{q}(t) + \frac{\Delta t}{2}\,
+  \mathbf{q}(t) \otimes \boldsymbol{\omega}_q
+  \label{eq:quat_euler}
+\end{equation}
+
+\noindent After each update, $\mathbf{q}$ must be renormalised to remain on the
+unit sphere: $\mathbf{q} \leftarrow \mathbf{q} / \|\mathbf{q}\|$.
+
+% ============================================================
+%  3.7  Advantages over Euler angles and matrices
+% ============================================================
+\subsection{Advantages over Euler Angles and Rotation Matrices}
+\label{sec:quat:advantages}
+
+Table~\ref{tab:rotation_comparison} summarises the key properties of the
+three most common rotation representations.  Quaternions offer the best
+trade-off between compactness, numerical stability, and computational cost
+for real-time sensor fusion applications.
+
+\begin{table}[t]
+  \centering
+  \caption{Comparison of rotation representations.}
+  \label{tab:rotation_comparison}
+  \small
+  \begin{tabular}{@{}lccc@{}}
+    \toprule
+    \textbf{Property} & \textbf{Euler} & \textbf{Matrix} & \textbf{Quaternion} \\
+    \midrule
+    Parameters             & 3     & 9     & 4 \\
+    Gimbal lock            & Yes   & No    & No \\
+    Singularity-free       & No    & Yes   & Yes \\
+    Composition cost       & High  & $O(27)$ & $O(16)$ \\
+    Renormalisation        & ---   & $O(n^3)$ & $O(n)$ \\
+    Interpolation (SLERP)  & Poor  & Poor  & Native \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Euler angles, while intuitive, suffer from \emph{gimbal lock}---a
+singularity that occurs when two rotation axes become aligned, causing a
+loss of one degree of freedom.  Rotation matrices are singularity-free
+but use nine parameters (with six orthogonality constraints), making
+renormalisation expensive.  Quaternions use only four parameters (with
+one constraint $\|\mathbf{q}\|=1$), avoid gimbal lock entirely, compose
+efficiently via the Hamilton product, and support smooth interpolation
+through spherical linear interpolation (SLERP).  These properties make
+quaternions the natural choice for the sensor fusion pipeline developed
+in this work.

@@ -1,0 +1,116 @@
+\section{Complementary Filter for Attitude Estimation}
+\label{sec:complementary_filter}
+
+% ----------------------------------------------------------------
+% TARGET: ~1.5 pages. The core fusion algorithm.
+% ----------------------------------------------------------------
+
+\subsection{Intuition}
+\label{sec:cf:intuition}
+
+As discussed in Section~\ref{sec:frames:fusion_need}, the accelerometer and
+gyroscope have complementary noise characteristics. The key insight is that
+their useful information occupies \emph{different frequency bands}:
+
+\begin{itemize}
+  \item The accelerometer-derived angle is reliable at \textbf{low frequencies}
+        (below $\sim$\!1~Hz) but corrupted at high frequencies.
+  \item The gyroscope-integrated angle is reliable at \textbf{high frequencies}
+        but drifts at low frequencies.
+\end{itemize}
+
+A complementary filter combines the two by applying a \emph{low-pass filter}
+to the accelerometer and a \emph{high-pass filter} to the gyroscope, such
+that their transfer functions sum to unity across all frequencies.
+
+\subsection{Filter Derivation}
+\label{sec:cf:derivation}
+
+Let $\theta_a(t)$ denote the tilt angle estimated from the accelerometer and
+$\theta_g(t)$ the angle obtained by integrating the gyroscope. The
+complementary filter output is:
+
+\begin{equation}
+  \boxed{
+    \hat{\theta}(t) = \alpha \bigl[\hat{\theta}(t - \Delta t)
+    + \omega(t)\,\Delta t\bigr]
+    + (1 - \alpha)\,\theta_a(t)
+  }
+  \label{eq:comp_filter}
+\end{equation}
+
+\noindent where $\alpha \in (0, 1)$ is the filter coefficient. The first term
+is a \emph{high-pass filter} on the gyroscope (it propagates the previous
+estimate forward and adds the incremental rotation), and the second term is a
+\emph{low-pass filter} on the accelerometer (it slowly corrects toward the
+gravity reference).
+
+The time constant of the filter is:
+
+\begin{equation}
+  \tau = \frac{\alpha\,\Delta t}{1 - \alpha}
+  \label{eq:time_constant}
+\end{equation}
+
+\noindent Typical values are $\alpha = 0.96$--$0.98$, corresponding to time
+constants of a few seconds.
+
+% ----- FIGURE: complementary filter block diagram -----
+% TODO: Block diagram showing:
+%   - Gyroscope → integrator → HPF ──┐
+%   - Accelerometer → atan2 → LPF ──┤→ Σ → θ_hat
+%   - Labels: α and (1-α)
+%   - Frequency response subplot below
+%
+% \begin{figure}[t]
+%   \centering
+%   \includegraphics[width=\columnwidth]{complementary_filter.pdf}
+%   \caption{Block diagram of the complementary filter. The gyroscope path
+%            (top) acts as a high-pass filter with coefficient $\alpha$; the
+%            accelerometer path (bottom) acts as a low-pass filter with
+%            coefficient $(1-\alpha)$. Their sum reconstructs the full-band
+%            attitude estimate.}
+%   \label{fig:comp_filter}
+% \end{figure}
+
+\subsection{Accelerometer Tilt Extraction}
+\label{sec:cf:tilt}
+
+When the sensor is approximately stationary, the accelerometer measures the
+gravity vector projected onto the body axes. The roll and pitch angles can be
+extracted as:
+
+\begin{align}
+  \phi   &= \arctan\!\left(\frac{a_y}{\sqrt{a_x^2 + a_z^2}}\right)
+  \label{eq:roll} \\[4pt]
+  \theta &= \arctan\!\left(\frac{-a_x}{\sqrt{a_y^2 + a_z^2}}\right)
+  \label{eq:pitch}
+\end{align}
+
+\noindent These relations assume that the only force acting on the sensor is
+gravity. During dynamic motion, the estimates become unreliable---precisely the
+regime where the gyroscope takes over through the high-pass path.
+
+\subsection{Quaternion Form of the Complementary Filter}
+\label{sec:cf:quaternion}
+
+To avoid gimbal lock, the complementary filter is implemented in quaternion
+space. At each time step:
+
+\begin{enumerate}
+  \item Integrate the gyroscope to obtain a predicted quaternion
+        $\mathbf{q}_\text{pred}$ using Eq.~\eqref{eq:quat_euler}.
+  \item Compute a reference quaternion $\mathbf{q}_\text{acc}$ from the
+        accelerometer tilt angles (Eqs.~\ref{eq:roll}--\ref{eq:pitch}).
+  \item Blend the two using spherical linear interpolation (SLERP):
+\end{enumerate}
+
+\begin{equation}
+  \mathbf{q}(t) = \text{SLERP}\bigl(\mathbf{q}_\text{acc},\;
+                  \mathbf{q}_\text{pred},\; \alpha\bigr)
+  \label{eq:slerp_filter}
+\end{equation}
+
+\noindent This is the quaternion analogue of the scalar
+Eq.~\eqref{eq:comp_filter}, with the SLERP parameter playing the role of
+$\alpha$.
