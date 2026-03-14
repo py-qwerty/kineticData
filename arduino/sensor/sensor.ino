@@ -193,8 +193,8 @@ void loop() {
                 float payload[6] = {ax, ay, az, gx, gy, gz};
                 imuCharacteristic.writeValue((byte*)payload, sizeof(payload));
 
-                // Serial debug — solo si hay Serial conectado, y sin separador
-                // para no bloquear el loop cuando el buffer se llena
+                // Serial debug — only when Serial is connected, no separator
+                // to avoid blocking the loop when the TX buffer is full
                 if (Serial) {
                     Serial.print(now);    Serial.print(",");
                     Serial.print(ax, 4);  Serial.print(",");
