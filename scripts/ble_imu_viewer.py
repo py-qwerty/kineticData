@@ -171,8 +171,13 @@ class BLEConnection:
         self._thread.start()
 
     def disconnect(self):
+        self._stop_event.set()  # funciona aunque no haya loop todavía
         if self._loop and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._stop_event.set)
+        # Si está escaneando/conectando, cancelar todas las tareas del loop
+        if self._loop and not self._loop.is_closed():
+            for task in asyncio.all_tasks(self._loop):
+                self._loop.call_soon_threadsafe(task.cancel)
 
     @property
     def connected(self):
@@ -183,33 +188,45 @@ class BLEConnection:
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._ble_task(device_name))
+        except asyncio.CancelledError:
+            pass
         except Exception as exc:
             self.on_status(f"Error: {exc}")
         finally:
             self._loop.close()
+            self._connected = False
 
     async def _ble_task(self, device_name: str):
-        self.on_status(f"Escaneando '{device_name}'...")
+        try:
+            self.on_status(f"Escaneando '{device_name}'...")
 
-        device = await BleakScanner.find_device_by_name(
-            device_name, timeout=12.0
-        )
-        if device is None:
-            self.on_status(f"No se encontró '{device_name}'")
-            return
+            device = await BleakScanner.find_device_by_name(
+                device_name, timeout=12.0
+            )
+            if device is None:
+                self.on_status(f"No se encontró '{device_name}'")
+                return
 
-        self.on_status(f"Encontrado: {device.address} — conectando...")
+            if self._stop_event.is_set():
+                return
 
-        async with BleakClient(device, timeout=20.0) as client:
-            self._connected = True
-            self.on_status(f"Conectado a {device_name}")
+            self.on_status(f"Encontrado: {device.address} — conectando...")
 
-            await client.start_notify(IMU_CHAR_UUID, self._imu_cb)
-            await self._stop_event.wait()
-            await client.stop_notify(IMU_CHAR_UUID)
+            async with BleakClient(device, timeout=20.0) as client:
+                self._connected = True
+                self.on_status(f"Conectado a {device_name}")
 
-        self._connected = False
-        self.on_status("Desconectado")
+                await client.start_notify(IMU_CHAR_UUID, self._imu_cb)
+                await self._stop_event.wait()
+                await client.stop_notify(IMU_CHAR_UUID)
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            self.on_status(f"Error BLE: {exc}")
+        finally:
+            self._connected = False
+            self.on_status("Desconectado")
 
     def _imu_cb(self, _sender, data: bytearray):
         """
