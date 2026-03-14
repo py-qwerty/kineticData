@@ -1,10 +1,15 @@
 """
-BLE IMU Viewer — XIAO nRF52840 Sense
+BLE IMU Viewer — XIAO nRF52840 Sense (SensorKit firmware)
 Interfaz Tkinter con:
   - Gráficas en tiempo real (acelerómetro + giroscopio)
-  - Dron 3D que rota con los datos del sensor
+  - Dron 3D que rota con los datos del sensor (filtro complementario)
   - Terminal de datos en vivo
   - Grabación a CSV
+
+Firmware esperado: sensor.ino (arduino/sensor/sensor.ino)
+  - Una sola característica BLE con 24 bytes (6 floats)
+  - Unidades: acelerómetro en m/s², giroscopio en rad/s
+  - Nombre BLE: "SensorKit"
 
 Uso:
     python scripts/ble_imu_viewer.py
@@ -29,16 +34,16 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from bleak import BleakClient, BleakScanner
 
-# ── UUIDs (deben coincidir con el firmware Arduino) ─────────
-IMU_SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214"
-ACCEL_CHAR_UUID  = "19b10001-e8f2-537e-4f6c-d104768a1214"
-GYRO_CHAR_UUID   = "19b10002-e8f2-537e-4f6c-d104768a1214"
+# ── BLE config (debe coincidir con sensor.ino) ─────────────
+# UUID de la característica (debe coincidir con sensor.ino)
+IMU_CHAR_UUID = "19b10001-e8f2-537e-4f6c-d104768a1214"
+DEVICE_NAME   = "SensorKit"
 
-DEVICE_NAME = "XIAO-IMU"
-
-MAX_POINTS = 300          # puntos en gráficas (ventana deslizante)
-TERMINAL_MAX_LINES = 200  # líneas máximas en la terminal
-COMP_ALPHA = 0.98         # filtro complementario (peso del giroscopio)
+# ── Constantes ──────────────────────────────────────────────
+G = 9.80665               # m/s² por g (para convertir a g en la gráfica)
+MAX_POINTS = 300           # puntos en gráficas (ventana deslizante)
+TERMINAL_MAX_LINES = 200   # líneas máximas en la terminal
+COMP_ALPHA = 0.98          # filtro complementario (peso del giroscopio)
 
 
 # ════════════════════════════════════════════════════════════
@@ -47,10 +52,8 @@ COMP_ALPHA = 0.98         # filtro complementario (peso del giroscopio)
 
 def _build_drone_geometry():
     """
-    Devuelve los vértices del dron centrado en el origen.
-    4 brazos + cuerpo central + indicador de frente.
-    Cada pieza es una lista de vértices (Nx3).
-    Retorna: list[(vertices, color)]
+    Genera las piezas 3D de un cuadricóptero centrado en el origen.
+    Retorna: list[(faces, color)]  donde faces es lista de polígonos.
     """
     arm_len = 1.0
     arm_w   = 0.08
@@ -61,7 +64,7 @@ def _build_drone_geometry():
 
     parts = []
 
-    # ─ Cuerpo central (prisma cuadrado) ─
+    # ─ Cuerpo central ─
     s = body_r
     body = np.array([
         [-s, -s, -arm_h], [ s, -s, -arm_h], [ s,  s, -arm_h], [-s,  s, -arm_h],
@@ -77,22 +80,20 @@ def _build_drone_geometry():
     ]
     parts.append((body_faces, "#37474f"))
 
-    # ─ 4 brazos ─
+    # ─ 4 brazos + motores ─
     angles = [45, 135, 225, 315]
-    front_angles = {45, 315}  # brazos delanteros
+    front_angles = {45, 315}
     for ang_deg in angles:
         ang = math.radians(ang_deg)
         dx, dy = math.cos(ang), math.sin(ang)
-
-        # Brazo (rectángulo alargado)
-        cx, cy = dx * arm_len * 0.5, dy * arm_len * 0.5
-        # Vector perpendicular al brazo
         px, py = -dy * arm_w, dx * arm_w
+
+        cx, cy = dx * arm_len * 0.5, dy * arm_len * 0.5
         arm_verts = np.array([
             [cx - dx*arm_len*0.5 - px, cy - dy*arm_len*0.5 - py, 0],
             [cx + dx*arm_len*0.5 - px, cy + dy*arm_len*0.5 - py, 0],
             [cx + dx*arm_len*0.5 + px, cy + dy*arm_len*0.5 + py, 0],
-            [cx - dx*arm_len*0.5 + px, cy - dy*arm_len*0.5 - py, 0],  # cerrar
+            [cx - dx*arm_len*0.5 + px, cy - dy*arm_len*0.5 - py, 0],
         ])
         arm_top = arm_verts.copy(); arm_top[:, 2] = arm_h
         arm_bot = arm_verts.copy(); arm_bot[:, 2] = -arm_h
@@ -105,11 +106,10 @@ def _build_drone_geometry():
         ]
         parts.append((arm_faces, "#546e7a"))
 
-        # Motor/disco en la punta del brazo
+        # Disco del motor
         tip_x, tip_y = dx * arm_len, dy * arm_len
         n_seg = 10
-        circle_top = []
-        circle_bot = []
+        circle_top, circle_bot = [], []
         for i in range(n_seg):
             a = 2 * math.pi * i / n_seg
             mx = tip_x + motor_r * math.cos(a)
@@ -119,7 +119,7 @@ def _build_drone_geometry():
         parts.append(([circle_top], "#e53935" if ang_deg in front_angles else "#1e88e5"))
         parts.append(([circle_bot], "#b0bec5"))
 
-    # ─ Flecha indicadora de frente (triángulo) ─
+    # ─ Flecha de frente ─
     arrow = [
         [body_r + 0.15, 0, arm_h + 0.01],
         [body_r - 0.05, -0.10, arm_h + 0.01],
@@ -134,18 +134,15 @@ DRONE_PARTS = _build_drone_geometry()
 
 
 def _rotation_matrix(roll, pitch, yaw):
-    """Matriz de rotación 3x3 desde ángulos de Euler (radianes)."""
+    """Matriz de rotación 3x3 (Euler ZYX) en radianes."""
     cr, sr = math.cos(roll),  math.sin(roll)
     cp, sp = math.cos(pitch), math.sin(pitch)
     cy, sy = math.cos(yaw),   math.sin(yaw)
-
-    # R = Rz(yaw) @ Ry(pitch) @ Rx(roll)
-    R = np.array([
+    return np.array([
         [cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr],
         [sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr],
         [  -sp,           cp*sr,            cp*cr   ],
     ])
-    return R
 
 
 # ════════════════════════════════════════════════════════════
@@ -153,12 +150,11 @@ def _rotation_matrix(roll, pitch, yaw):
 # ════════════════════════════════════════════════════════════
 
 class BLEConnection:
-    """Gestiona la conexión BLE en un hilo separado con su propio event loop."""
+    """Gestiona la conexión BLE en un hilo separado."""
 
-    def __init__(self, on_accel, on_gyro, on_status):
-        self.on_accel = on_accel
-        self.on_gyro = on_gyro
-        self.on_status = on_status
+    def __init__(self, on_imu_data, on_status):
+        self.on_imu_data = on_imu_data   # callback(ax, ay, az, gx, gy, gz)
+        self.on_status   = on_status
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -208,26 +204,21 @@ class BLEConnection:
             self._connected = True
             self.on_status(f"Conectado a {device_name}")
 
-            await client.start_notify(ACCEL_CHAR_UUID, self._accel_cb)
-            await client.start_notify(GYRO_CHAR_UUID, self._gyro_cb)
-
+            await client.start_notify(IMU_CHAR_UUID, self._imu_cb)
             await self._stop_event.wait()
-
-            await client.stop_notify(ACCEL_CHAR_UUID)
-            await client.stop_notify(GYRO_CHAR_UUID)
+            await client.stop_notify(IMU_CHAR_UUID)
 
         self._connected = False
         self.on_status("Desconectado")
 
-    def _accel_cb(self, _sender, data: bytearray):
-        if len(data) >= 12:
-            ax, ay, az = struct.unpack('<fff', data[:12])
-            self.on_accel(ax, ay, az)
-
-    def _gyro_cb(self, _sender, data: bytearray):
-        if len(data) >= 12:
-            gx, gy, gz = struct.unpack('<fff', data[:12])
-            self.on_gyro(gx, gy, gz)
+    def _imu_cb(self, _sender, data: bytearray):
+        """
+        Payload del firmware: 24 bytes = 6 floats little-endian
+        [ax, ay, az] en m/s²   [gx, gy, gz] en rad/s
+        """
+        if len(data) >= 24:
+            ax, ay, az, gx, gy, gz = struct.unpack('<ffffff', data[:24])
+            self.on_imu_data(ax, ay, az, gx, gy, gz)
 
 
 # ════════════════════════════════════════════════════════════
@@ -236,10 +227,17 @@ class BLEConnection:
 
 class IMUViewerApp:
     """
-    Ventana Tkinter con:
-      - Gráficas de acelerómetro y giroscopio (izquierda)
-      - Dron 3D que rota en tiempo real (derecha arriba)
-      - Terminal de datos (derecha abajo)
+    Layout:
+      ┌────────────────────────────────────────────────────┐
+      │  [Dispositivo] [Conectar] [Desconectar] [CSV]  RPY │
+      │  Accel: ...               Gyro: ...     Muestras   │
+      ├─────────────────────────┬──────────────────────────┤
+      │  Gráfica Acelerómetro   │    Dron 3D rotando       │
+      │  Gráfica Giroscopio     ├──────────────────────────┤
+      │                         │    Terminal de datos      │
+      ├─────────────────────────┴──────────────────────────┤
+      │  Status: Conectado a SensorKit                     │
+      └────────────────────────────────────────────────────┘
     """
 
     def __init__(self, root: tk.Tk):
@@ -264,14 +262,13 @@ class IMUViewerApp:
         self._sample_count = 0
 
         # Actitud estimada (filtro complementario)
-        self._roll  = 0.0  # rad
-        self._pitch = 0.0  # rad
-        self._yaw   = 0.0  # rad
+        self._roll  = 0.0   # rad
+        self._pitch = 0.0   # rad
+        self._yaw   = 0.0   # rad
 
-        # BLE
+        # BLE — una sola característica con 6 floats
         self.ble = BLEConnection(
-            on_accel=self._on_accel,
-            on_gyro=self._on_gyro,
+            on_imu_data=self._on_imu_data,
             on_status=self._on_status,
         )
 
@@ -300,11 +297,10 @@ class IMUViewerApp:
         self.save_btn.pack(side=tk.LEFT, padx=4)
         ttk.Button(top, text="Limpiar", command=self._on_clear).pack(side=tk.LEFT, padx=4)
 
-        # Indicadores de actitud
         self.attitude_label = ttk.Label(top, text="R:  0.0°  P:  0.0°  Y:  0.0°", font=("Menlo", 11))
         self.attitude_label.pack(side=tk.RIGHT, padx=10)
 
-        # ═══ Status bar (abajo) ═══
+        # ═══ Status bar ═══
         self.status_var = tk.StringVar(value="Desconectado")
         ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W, padding=4).pack(
             fill=tk.X, side=tk.BOTTOM
@@ -317,10 +313,10 @@ class IMUViewerApp:
         self.accel_label.pack(side=tk.LEFT, expand=True)
         self.gyro_label = ttk.Label(vals, text="Gyro: —", font=("Menlo", 11))
         self.gyro_label.pack(side=tk.LEFT, expand=True)
-        self.samples_label = ttk.Label(vals, text="Muestras: 0", font=("Menlo", 11))
+        self.samples_label = ttk.Label(vals, text="Muestras: 0  |  0.0 Hz", font=("Menlo", 11))
         self.samples_label.pack(side=tk.RIGHT, padx=10)
 
-        # ═══ Contenido principal (PanedWindow horizontal) ═══
+        # ═══ Contenido principal ═══
         paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
@@ -337,7 +333,7 @@ class IMUViewerApp:
         self.canvas_plots = FigureCanvasTkAgg(self.fig_plots, master=left)
         self.canvas_plots.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # ─── Columna derecha: dron 3D + terminal ───
+        # ─── Columna derecha: dron + terminal ───
         right = ttk.PanedWindow(paned, orient=tk.VERTICAL)
         paned.add(right, weight=2)
 
@@ -358,29 +354,23 @@ class IMUViewerApp:
         right.add(term_frame, weight=2)
 
         self.terminal = tk.Text(
-            term_frame,
-            bg="#1e1e1e", fg="#d4d4d4",
-            font=("Menlo", 9),
-            state=tk.DISABLED,
-            wrap=tk.NONE,
-            height=8,
+            term_frame, bg="#1e1e1e", fg="#d4d4d4",
+            font=("Menlo", 9), state=tk.DISABLED, wrap=tk.NONE, height=8,
         )
         term_scroll = ttk.Scrollbar(term_frame, orient=tk.VERTICAL, command=self.terminal.yview)
         self.terminal.configure(yscrollcommand=term_scroll.set)
         term_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.terminal.pack(fill=tk.BOTH, expand=True)
 
-        # Tags de color para la terminal
         self.terminal.tag_configure("time",  foreground="#6a9955")
         self.terminal.tag_configure("accel", foreground="#569cd6")
         self.terminal.tag_configure("gyro",  foreground="#ce9178")
         self.terminal.tag_configure("info",  foreground="#608b4e")
-        self.terminal.tag_configure("error", foreground="#f44747")
 
     def _setup_plot_axes(self):
         ax = self.ax_accel
         ax.set_title("Acelerómetro", fontsize=10, fontweight="bold", loc="left")
-        ax.set_ylabel("g")
+        ax.set_ylabel("m/s²")
         ax.grid(True, alpha=0.3)
         self.line_ax, = ax.plot([], [], color="#e53935", lw=1, label="X")
         self.line_ay, = ax.plot([], [], color="#43a047", lw=1, label="Y")
@@ -389,7 +379,7 @@ class IMUViewerApp:
 
         ax2 = self.ax_gyro
         ax2.set_title("Giroscopio", fontsize=10, fontweight="bold", loc="left")
-        ax2.set_ylabel("dps")
+        ax2.set_ylabel("rad/s")
         ax2.set_xlabel("Tiempo (s)")
         ax2.grid(True, alpha=0.3)
         self.line_gx, = ax2.plot([], [], color="#e53935", lw=1, label="X")
@@ -402,13 +392,10 @@ class IMUViewerApp:
         ax.set_xlim(-1.8, 1.8)
         ax.set_ylim(-1.8, 1.8)
         ax.set_zlim(-1.2, 1.2)
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y")
-        ax.set_zlabel("Z")
+        ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
         ax.set_title("Actitud del dron", fontsize=10, fontweight="bold", loc="left")
         ax.view_init(elev=25, azim=-135)
         ax.set_box_aspect([1, 1, 0.6])
-        # Desactivar los paneles de fondo para que sea más limpio
         ax.xaxis.pane.fill = False
         ax.yaxis.pane.fill = False
         ax.zaxis.pane.fill = False
@@ -416,14 +403,12 @@ class IMUViewerApp:
     # ── Terminal ────────────────────────────────────────────
 
     def _term_write(self, text: str, tag: str = ""):
-        """Escribe una línea en la terminal (thread-safe via after_idle)."""
         def _do():
             self.terminal.config(state=tk.NORMAL)
             if tag:
                 self.terminal.insert(tk.END, text, tag)
             else:
                 self.terminal.insert(tk.END, text)
-            # Limitar líneas
             line_count = int(self.terminal.index("end-1c").split(".")[0])
             if line_count > TERMINAL_MAX_LINES:
                 self.terminal.delete("1.0", f"{line_count - TERMINAL_MAX_LINES}.0")
@@ -431,35 +416,42 @@ class IMUViewerApp:
             self.terminal.config(state=tk.DISABLED)
         self.root.after_idle(_do)
 
-    # ── Callbacks BLE ───────────────────────────────────────
+    # ── Callback BLE (un solo paquete con 6 floats) ─────────
 
-    def _on_accel(self, ax_val, ay_val, az_val):
+    def _on_imu_data(self, ax_ms2, ay_ms2, az_ms2, gx_rad, gy_rad, gz_rad):
+        """
+        Recibe un paquete completo del firmware:
+        accel en m/s², gyro en rad/s (ya calibrado).
+        """
         now = time.time()
         if self._t0 is None:
             self._t0 = now
             self._last_time = now
 
-        t = now - self._t0
+        t  = now - self._t0
         dt = now - self._last_time
         self._last_time = now
-
-        self.t_data.append(t)
-        self.ax_data.append(ax_val)
-        self.ay_data.append(ay_val)
-        self.az_data.append(az_val)
         self._sample_count += 1
 
-        # ─ Estimar roll y pitch desde acelerómetro (gravedad) ─
-        accel_roll  = math.atan2(ay_val, az_val)
-        accel_pitch = math.atan2(-ax_val, math.sqrt(ay_val**2 + az_val**2))
+        # Almacenar datos raw (en unidades del firmware)
+        self.t_data.append(t)
+        self.ax_data.append(ax_ms2)
+        self.ay_data.append(ay_ms2)
+        self.az_data.append(az_ms2)
+        self.gx_data.append(gx_rad)
+        self.gy_data.append(gy_rad)
+        self.gz_data.append(gz_rad)
 
-        # Filtro complementario: combinar accel (lento pero estable)
-        # con giroscopio (rápido pero deriva)
-        if dt > 0 and dt < 0.5:
-            gx_rad = math.radians(self.gx_data[-1]) if self.gx_data else 0
-            gy_rad = math.radians(self.gy_data[-1]) if self.gy_data else 0
-            gz_rad = math.radians(self.gz_data[-1]) if self.gz_data else 0
+        # ─ Filtro complementario para actitud ─
+        # Convertir accel m/s² → g para calcular ángulos
+        ax_g = ax_ms2 / G
+        ay_g = ay_ms2 / G
+        az_g = az_ms2 / G
 
+        accel_roll  = math.atan2(ay_g, az_g)
+        accel_pitch = math.atan2(-ax_g, math.sqrt(ay_g**2 + az_g**2))
+
+        if 0 < dt < 0.5:
             self._roll  = COMP_ALPHA * (self._roll  + gx_rad * dt) + (1 - COMP_ALPHA) * accel_roll
             self._pitch = COMP_ALPHA * (self._pitch + gy_rad * dt) + (1 - COMP_ALPHA) * accel_pitch
             self._yaw  += gz_rad * dt
@@ -467,51 +459,45 @@ class IMUViewerApp:
             self._roll  = accel_roll
             self._pitch = accel_pitch
 
-        # Labels
-        self.root.after_idle(
-            self.accel_label.config,
-            {"text": f"Accel: X={ax_val:+.4f}  Y={ay_val:+.4f}  Z={az_val:+.4f} g"}
-        )
         r_deg = math.degrees(self._roll)
         p_deg = math.degrees(self._pitch)
         y_deg = math.degrees(self._yaw)
+
+        # Labels (thread-safe)
+        self.root.after_idle(
+            self.accel_label.config,
+            {"text": f"Accel: X={ax_ms2:+7.3f}  Y={ay_ms2:+7.3f}  Z={az_ms2:+7.3f} m/s²"}
+        )
+        self.root.after_idle(
+            self.gyro_label.config,
+            {"text": f"Gyro: X={gx_rad:+6.3f}  Y={gy_rad:+6.3f}  Z={gz_rad:+6.3f} rad/s"}
+        )
         self.root.after_idle(
             self.attitude_label.config,
             {"text": f"R:{r_deg:+6.1f}°  P:{p_deg:+6.1f}°  Y:{y_deg:+6.1f}°"}
         )
 
-        # Terminal (imprimir cada 5 muestras para no saturar)
-        if self._sample_count % 5 == 0:
-            self._term_write(f"[{t:7.2f}s] ", "time")
-            self._term_write(f"A: {ax_val:+.3f} {ay_val:+.3f} {az_val:+.3f}  ", "accel")
-            gx = self.gx_data[-1] if self.gx_data else 0
-            gy = self.gy_data[-1] if self.gy_data else 0
-            gz = self.gz_data[-1] if self.gz_data else 0
-            self._term_write(f"G: {gx:+7.1f} {gy:+7.1f} {gz:+7.1f}  ", "gyro")
-            self._term_write(f"RPY: {r_deg:+6.1f} {p_deg:+6.1f} {y_deg:+6.1f}\n")
-
-    def _on_gyro(self, gx, gy, gz):
-        self.gx_data.append(gx)
-        self.gy_data.append(gy)
-        self.gz_data.append(gz)
-
+        # Frecuencia de muestreo
+        hz = 1.0 / dt if dt > 0 else 0
         self.root.after_idle(
-            self.gyro_label.config,
-            {"text": f"Gyro:  X={gx:+.2f}  Y={gy:+.2f}  Z={gz:+.2f} dps"}
+            self.samples_label.config,
+            {"text": f"Muestras: {self._sample_count}  |  {hz:.0f} Hz"}
         )
 
         # Grabar CSV
-        if self._recording and self.t_data:
-            t = self.t_data[-1]
-            ax_v = self.ax_data[-1] if self.ax_data else 0
-            ay_v = self.ay_data[-1] if self.ay_data else 0
-            az_v = self.az_data[-1] if self.az_data else 0
-            self._csv_rows.append([t, ax_v, ay_v, az_v, gx, gy, gz])
+        if self._recording:
+            self._csv_rows.append([t, ax_ms2, ay_ms2, az_ms2, gx_rad, gy_rad, gz_rad])
 
-        self.root.after_idle(
-            self.samples_label.config,
-            {"text": f"Muestras: {self._sample_count}"}
-        )
+        # Terminal (cada 5 muestras para no saturar)
+        if self._sample_count % 5 == 0:
+            self._term_write(f"[{t:7.2f}s] ", "time")
+            self._term_write(
+                f"A: {ax_ms2:+7.3f} {ay_ms2:+7.3f} {az_ms2:+7.3f} m/s²  ", "accel"
+            )
+            self._term_write(
+                f"G: {gx_rad:+6.3f} {gy_rad:+6.3f} {gz_rad:+6.3f} rad/s  ", "gyro"
+            )
+            self._term_write(f"RPY: {r_deg:+6.1f} {p_deg:+6.1f} {y_deg:+6.1f}\n")
 
     def _on_status(self, msg: str):
         self.root.after_idle(self.status_var.set, msg)
@@ -544,9 +530,8 @@ class IMUViewerApp:
             d.clear()
         self.accel_label.config(text="Accel: —")
         self.gyro_label.config(text="Gyro: —")
-        self.samples_label.config(text="Muestras: 0")
+        self.samples_label.config(text="Muestras: 0  |  0.0 Hz")
         self.attitude_label.config(text="R:  0.0°  P:  0.0°  Y:  0.0°")
-        # Limpiar terminal
         self.terminal.config(state=tk.NORMAL)
         self.terminal.delete("1.0", tk.END)
         self.terminal.config(state=tk.DISABLED)
@@ -589,7 +574,7 @@ class IMUViewerApp:
         self._csv_rows = []
         self.save_btn.config(state=tk.DISABLED)
 
-    # ── Actualización visual (cada 60 ms) ───────────────────
+    # ── Actualización visual (~16 fps) ──────────────────────
 
     def _schedule_plot_update(self):
         self._update_plots()
@@ -616,7 +601,7 @@ class IMUViewerApp:
         all_a = list(self.ax_data) + list(self.ay_data) + list(self.az_data)
         if all_a:
             a_min, a_max = min(all_a), max(all_a)
-            margin = max(0.1, (a_max - a_min) * 0.1)
+            margin = max(0.5, (a_max - a_min) * 0.1)
             ax.set_ylim(a_min - margin, a_max + margin)
 
         # Giroscopio
@@ -632,7 +617,7 @@ class IMUViewerApp:
             all_g = list(self.gx_data) + list(self.gy_data) + list(self.gz_data)
             if all_g:
                 g_min, g_max = min(all_g), max(all_g)
-                margin = max(1.0, (g_max - g_min) * 0.1)
+                margin = max(0.05, (g_max - g_min) * 0.1)
                 ax2.set_ylim(g_min - margin, g_max + margin)
 
         self.canvas_plots.draw_idle()
@@ -647,10 +632,8 @@ class IMUViewerApp:
         for faces, color in DRONE_PARTS:
             transformed = []
             for face in faces:
-                verts = np.array(face)
-                rotated = (R @ verts.T).T
+                rotated = (R @ np.array(face).T).T
                 transformed.append(rotated.tolist())
-
             poly = Poly3DCollection(transformed, alpha=0.85)
             poly.set_facecolor(color)
             poly.set_edgecolor("#263238")
@@ -667,8 +650,6 @@ class IMUViewerApp:
         self.ble.disconnect()
         self.root.destroy()
 
-
-# ════════════════════════════════════════════════════════════
 
 def main():
     root = tk.Tk()

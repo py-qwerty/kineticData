@@ -49,12 +49,13 @@ struct GyroPrefs {
 
 // ─── BLE ─────────────────────────────────────────────────────────────────────
 
-// Custom 128-bit UUIDs for the IMU service and characteristic
-BLEService imuService("19B10002-E8F2-537E-4F6C-D104768A1214");
+// Custom 128-bit UUIDs — servicio y característica deben ser DIFERENTES
+// para evitar confusión en algunos stacks BLE
+BLEService imuService("19B10000-E8F2-537E-4F6C-D104768A1214");
 
 // Characteristic carries 6 floats (ax, ay, az, gx, gy, gz) = 24 bytes
 BLECharacteristic imuCharacteristic(
-    "19B10002-E8F2-537E-4F6C-D104768A1214",
+    "19B10001-E8F2-537E-4F6C-D104768A1214",
     BLERead | BLENotify,
     24
 );
@@ -122,7 +123,10 @@ void calibrateGyro() {
 
 void setup() {
     Serial.begin(115200);
-    while (!Serial);
+    // Esperar Serial solo si hay USB conectado (máximo 2 segundos)
+    // Sin esto, la placa se cuelga si arranca sin USB
+    unsigned long serialWait = millis();
+    while (!Serial && millis() - serialWait < 2000);
     Serial.println("# SensorKit — XIAO nRF52840 Sense");
 
     // Initialize IMU
@@ -189,17 +193,17 @@ void loop() {
                 float payload[6] = {ax, ay, az, gx, gy, gz};
                 imuCharacteristic.writeValue((byte*)payload, sizeof(payload));
 
-                // Mirror data to Serial for debugging / CSV capture
-                Serial.print(now);    Serial.print(",");
-                Serial.print(ax, 4);  Serial.print(",");
-                Serial.print(ay, 4);  Serial.print(",");
-                Serial.print(az, 4);  Serial.print(",");
-                Serial.print(gx, 6);  Serial.print(",");
-                Serial.print(gy, 6);  Serial.print(",");
-                Serial.println(gz, 6);
-
-                // Visual separator between readings for easier Serial Monitor reading
-                Serial.println("----------------------------------------");
+                // Serial debug — solo si hay Serial conectado, y sin separador
+                // para no bloquear el loop cuando el buffer se llena
+                if (Serial) {
+                    Serial.print(now);    Serial.print(",");
+                    Serial.print(ax, 4);  Serial.print(",");
+                    Serial.print(ay, 4);  Serial.print(",");
+                    Serial.print(az, 4);  Serial.print(",");
+                    Serial.print(gx, 6);  Serial.print(",");
+                    Serial.print(gy, 6);  Serial.print(",");
+                    Serial.println(gz, 6);
+                }
             }
         }
 
