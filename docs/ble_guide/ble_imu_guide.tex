@@ -1,0 +1,1934 @@
+% ============================================================
+%  BLE IMU Guide - XIAO nRF52840 Sense
+%  Guia exhaustiva desde cero absoluto
+% ============================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-noquoting,es-noshorthands]{babel}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+% ── Estilos de codigo ────────────────────────────────────
+\definecolor{codebg}{HTML}{F5F5F5}
+\definecolor{codegreen}{HTML}{2E7D32}
+\definecolor{codegray}{HTML}{757575}
+\definecolor{codeblue}{HTML}{1565C0}
+
+\lstdefinestyle{arduino}{
+    language=C++,
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{gray!40},
+    keywordstyle=\color{codeblue}\bfseries,
+    stringstyle=\color{codegreen},
+    commentstyle=\color{codegray}\itshape,
+    numberstyle=\tiny\color{codegray},
+    numbers=left,
+    numbersep=8pt,
+    tabsize=2,
+    showstringspaces=false,
+    morekeywords={BLEService,BLECharacteristic,BLEDevice,LSM6DS3,
+                  BLERead,BLENotify,uint8_t,float,void,byte},
+}
+
+\lstdefinestyle{python}{
+    language=Python,
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{gray!40},
+    keywordstyle=\color{codeblue}\bfseries,
+    stringstyle=\color{codegreen},
+    commentstyle=\color{codegray}\itshape,
+    numberstyle=\tiny\color{codegray},
+    numbers=left,
+    numbersep=8pt,
+    tabsize=4,
+    showstringspaces=false,
+    morekeywords={async,await,asyncio,struct,bytearray,BleakClient,
+                  BleakScanner,True,False,None,f},
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textit{SensorKit --- BLE IMU Guide}}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\title{%
+    \vspace{-1cm}
+    \textbf{Guia Completa: Lectura de IMU via BLE}\\[6pt]
+    \large Seeed XIAO nRF52840 Sense $\rightarrow$ Python\\[4pt]
+    \normalsize Todo explicado desde cero, sin dar nada por sabido
+}
+\author{SensorKit Project}
+\date{Marzo 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+
+% ============================================================
+\part{Fundamentos: todo lo que necesitas saber antes de tocar codigo}
+% ============================================================
+
+
+% ============================================================
+\section{Que es lo que queremos hacer (y por que es complicado)}
+% ============================================================
+
+Nuestro objetivo final es muy simple de describir: queremos leer
+numeros de un sensor y verlos en nuestro ordenador. Pero hay un
+problema: el sensor no esta enchufado al ordenador con un cable.
+Esta en una plaquita pequeña (la XIAO nRF52840 Sense) que se
+comunica por Bluetooth.
+
+Esto introduce varias capas de complejidad:
+
+\begin{enumerate}
+    \item El sensor no ``habla'' Bluetooth. El sensor habla un
+          protocolo llamado I$^2$C (lo veremos despues). Asi que
+          necesitamos un \textbf{traductor}: el microcontrolador
+          nRF52840 que esta en la placa, que lee los datos del
+          sensor por I$^2$C y los reempaqueta para enviarlos por
+          Bluetooth.
+
+    \item Bluetooth no es como un cable USB donde simplemente
+          ``fluyen'' bytes. Bluetooth Low Energy (BLE) tiene una
+          estructura rigida: los datos se organizan en ``servicios''
+          y ``caracteristicas'' (esto se llama GATT, y lo
+          explicaremos a fondo).
+
+    \item Del lado del ordenador, necesitamos un programa que sepa
+          hablar BLE, conectarse al dispositivo, y extraer los
+          datos. Para esto usamos Python con la libreria
+          \texttt{bleak}.
+\end{enumerate}
+
+El flujo completo es:
+
+\begin{verbatim}
+  SENSOR (chip LSM6DS3TR-C)
+    "Tengo una aceleracion de 0.02g en X"
+         |
+         | Protocolo I2C (cables fisicos dentro de la placa)
+         v
+  MICROCONTROLADOR (chip nRF52840)
+    "Empaqueto esos datos como bytes y los pongo
+     disponibles via Bluetooth"
+         |
+         | Ondas de radio Bluetooth (2.4 GHz, sin cables)
+         v
+  TU ORDENADOR (Mac/PC/Linux)
+    "Me conecto por Bluetooth, leo los bytes,
+     los convierto de vuelta a numeros"
+         |
+         | Libreria bleak + struct de Python
+         v
+  TU SCRIPT PYTHON
+    "Ahora tengo ax=0.02, ay=0.01, az=1.00
+     y puedo hacer lo que quiera con ellos"
+\end{verbatim}
+
+Cada una de estas flechas es un mundo. Vamos a explicarlas todas.
+
+
+% ============================================================
+\section{El sensor: LSM6DS3TR-C}
+% ============================================================
+
+\subsection{Que es un sensor IMU}
+
+IMU significa \textbf{Inertial Measurement Unit} (Unidad de Medicion
+Inercial). Es un chip que mide movimiento. El LSM6DS3TR-C, fabricado
+por la empresa \textbf{STMicroelectronics}, tiene dos sensores dentro:
+
+\begin{itemize}
+    \item \textbf{Acelerometro}: Mide \emph{aceleracion lineal}. Si
+          mueves la placa hacia la derecha, el acelerometro detecta
+          esa aceleracion. Tambien detecta la gravedad terrestre: si
+          la placa esta quieta sobre una mesa, el eje que apunta
+          hacia arriba mide aproximadamente $1g$ (donde
+          $1g = 9.81 \text{ m/s}^2$). Los otros dos ejes miden
+          aproximadamente $0g$.
+
+          El acelerometro funciona internamente con una masa
+          microscopica suspendida por muelles de silicio. Cuando
+          el chip acelera, la masa se queda atras por inercia y
+          deforma los muelles. La deformacion se mide como un
+          cambio en la capacitancia electrica entre placas
+          microscopicas. Ese cambio de capacitancia se convierte
+          en un voltaje, y luego un conversor analogico-digital
+          (ADC) lo convierte en un numero.
+
+    \item \textbf{Giroscopio}: Mide \emph{velocidad angular}
+          (que tan rapido estas girando). Si giras la placa sobre
+          su eje Z, el giroscopio del eje Z mide esa velocidad
+          en \textbf{grados por segundo} (dps). Si la placa esta
+          quieta, todos los ejes miden aproximadamente 0.
+
+          El giroscopio usa el efecto Coriolis: dentro del chip hay
+          una estructura que vibra a alta frecuencia. Cuando el chip
+          gira, la fuerza de Coriolis desvía la vibracion en una
+          direccion perpendicular. Esa desviacion se mide como un
+          cambio de capacitancia, se convierte en voltaje, y luego
+          en un numero.
+\end{itemize}
+
+\subsection{Ejes X, Y, Z}
+
+Cada sensor mide en \textbf{tres ejes perpendiculares}: X, Y, Z.
+Imagina que pones la placa sobre la mesa:
+
+\begin{itemize}
+    \item \textbf{X}: Apunta hacia la derecha de la placa.
+    \item \textbf{Y}: Apunta hacia ``arriba'' de la placa (el lado
+          opuesto al conector USB).
+    \item \textbf{Z}: Apunta hacia arriba, perpendicular a la mesa.
+\end{itemize}
+
+En total tenemos 6 valores: $a_x, a_y, a_z$ (acelerometro) y
+$g_x, g_y, g_z$ (giroscopio). Por eso se dice ``6 ejes'' o ``6-DOF''
+(6 Degrees of Freedom).
+
+\subsection{Rangos y precision}
+
+El sensor tiene rangos configurables. Un rango mayor permite medir
+movimientos mas bruscos, pero con menos precision:
+
+\begin{center}
+\begin{tabular}{lll}
+\hline
+\textbf{Sensor} & \textbf{Rangos disponibles} & \textbf{Default} \\
+\hline
+Acelerometro & $\pm$2g, $\pm$4g, $\pm$8g, $\pm$16g & $\pm$2g \\
+Giroscopio & $\pm$125, $\pm$245, $\pm$500, $\pm$1000, $\pm$2000 dps & $\pm$245 dps \\
+\hline
+\end{tabular}
+\end{center}
+
+Internamente, el sensor convierte su medicion a un numero entero de
+16 bits (valores de $-32768$ a $+32767$). Si el rango del
+acelerometro es $\pm$2g, entonces $+32767$ corresponde a $+2g$ y
+$-32768$ corresponde a $-2g$. La resolucion es:
+$$\frac{2g}{32768} \approx 0.000061 \text{ g por unidad}$$
+
+La libreria que usamos en Arduino hace esta conversion por nosotros
+y nos da directamente el valor en $g$ o $dps$.
+
+\subsection{Registros: como se comunica el sensor}
+
+El sensor LSM6DS3TR-C es, en esencia, una pequeña memoria con
+``casillas'' llamadas \textbf{registros}. Cada registro tiene una
+direccion (un numero hexadecimal) y almacena un byte (8 bits,
+valor de 0 a 255).
+
+Hay dos tipos de registros:
+
+\begin{itemize}
+    \item \textbf{Registros de configuracion}: Tu escribes en ellos
+          para decirle al sensor como comportarse. Por ejemplo, el
+          registro \texttt{CTRL1\_XL} (direccion \texttt{0x10})
+          controla la frecuencia de muestreo y el rango del
+          acelerometro. Si escribes el byte \texttt{0x60} en ese
+          registro, le estas diciendo: ``muestrea a 416 Hz con
+          rango $\pm$2g''.
+
+    \item \textbf{Registros de datos}: El sensor escribe en ellos
+          los valores medidos. Tu los lees. Los datos del
+          acelerometro eje X estan en los registros \texttt{0x28}
+          (byte bajo) y \texttt{0x29} (byte alto). Juntos forman
+          un entero de 16 bits.
+\end{itemize}
+
+\begin{center}
+\begin{tabular}{lll}
+\hline
+\textbf{Registro} & \textbf{Direccion} & \textbf{Contenido} \\
+\hline
+WHO\_AM\_I & 0x0F & Siempre vale 0x6A (identifica al chip) \\
+CTRL1\_XL & 0x10 & Configuracion del acelerometro \\
+CTRL2\_G & 0x11 & Configuracion del giroscopio \\
+OUTX\_L\_XL & 0x28 & Acelerometro X, byte bajo \\
+OUTX\_H\_XL & 0x29 & Acelerometro X, byte alto \\
+OUTY\_L\_XL & 0x2A & Acelerometro Y, byte bajo \\
+... & ... & ... \\
+OUTX\_L\_G & 0x22 & Giroscopio X, byte bajo \\
+OUTX\_H\_G & 0x23 & Giroscopio X, byte alto \\
+... & ... & ... \\
+\hline
+\end{tabular}
+\end{center}
+
+Pero nosotros no leemos estos registros directamente en nuestro
+codigo. La libreria \texttt{Seeed\_Arduino\_LSM6DS3} lo hace por
+nosotros. Cuando llamamos a \texttt{myIMU.readFloatAccelX()}, la
+libreria:
+\begin{enumerate}
+    \item Lee los registros \texttt{0x28} y \texttt{0x29}.
+    \item Combina los dos bytes en un entero de 16 bits.
+    \item Multiplica por el factor de escala ($0.000061$ para $\pm$2g).
+    \item Devuelve el resultado como un \texttt{float} en unidades de $g$.
+\end{enumerate}
+
+
+% ============================================================
+\section{I$^2$C: como el microcontrolador habla con el sensor}
+% ============================================================
+
+\subsection{Que es I$^2$C}
+
+I$^2$C (pronunciado ``i-cuadrado-ce'' o ``i-dos-ce'') significa
+\textbf{Inter-Integrated Circuit}. Es un protocolo de comunicacion
+que permite a chips electronicos hablar entre si usando solo
+\textbf{dos cables}:
+
+\begin{itemize}
+    \item \textbf{SDA} (Serial Data): Por aqui viajan los datos
+          en ambas direcciones (el micro le envia comandos al sensor,
+          el sensor le devuelve los datos al micro).
+    \item \textbf{SCL} (Serial Clock): Es una senal de reloj que
+          marca el ritmo. Cada ``tick'' del reloj significa
+          ``ahora lee un bit de SDA''. Esto sincroniza a ambos
+          chips para que no se pierdan datos.
+\end{itemize}
+
+\subsection{Master y Slave}
+
+En I$^2$C siempre hay un \textbf{master} (quien manda) y uno o
+mas \textbf{slaves} (quienes obedecen):
+
+\begin{itemize}
+    \item \textbf{Master}: El microcontrolador nRF52840. El inicia
+          todas las comunicaciones. Dice ``quiero leer el registro
+          0x28 del dispositivo 0x6A''.
+    \item \textbf{Slave}: El sensor LSM6DS3TR-C. Su direccion en
+          el bus es \textbf{0x6A}. Cuando el master pide el
+          registro 0x28, el sensor responde con el byte que tiene
+          almacenado ahi.
+\end{itemize}
+
+\subsection{Direccion 0x6A}
+
+Cada dispositivo I$^2$C tiene una direccion unica de 7 bits (valores
+de 0 a 127, o 0x00 a 0x7F en hexadecimal). Esto permite tener
+hasta 128 dispositivos en el mismo bus (mismos dos cables). El
+master incluye la direccion en cada comunicacion para que solo el
+dispositivo correcto responda.
+
+El LSM6DS3TR-C tiene la direccion \textbf{0x6A} porque asi lo
+diseño STMicroelectronics. Viene fija de fabrica (bueno, se puede
+cambiar a 0x6B moviendo un pin, pero en la XIAO esta soldado a
+0x6A).
+
+\subsection{Como se ve una lectura I$^2$C por dentro}
+
+Cuando el micro quiere leer el eje X del acelerometro, la
+conversacion en el bus I$^2$C es algo asi:
+
+\begin{enumerate}
+    \item El master envia una condicion de START (baja SDA mientras
+          SCL esta alto --- esta es una senal electrica especial
+          que todos los slaves reconocen como ``atencion, empieza
+          una comunicacion'').
+    \item El master envia la direccion 0x6A + bit de escritura.
+          El slave responde con ACK (``estoy aqui'').
+    \item El master envia 0x28 (``quiero empezar a leer desde el
+          registro 0x28'').
+    \item El master envia otra condicion de START (repeated start).
+    \item El master envia la direccion 0x6A + bit de lectura.
+    \item El slave envia el contenido del registro 0x28 (byte bajo
+          del acelerometro X).
+    \item El master envia ACK (``dame mas'').
+    \item El slave envia el contenido de 0x29 (byte alto del
+          acelerometro X).
+    \item El master envia NACK (``ya no quiero mas'') y condicion
+          de STOP.
+\end{enumerate}
+
+Todo esto ocurre a una velocidad de 400 kHz (400,000 ciclos de
+reloj por segundo), asi que una lectura completa tarda
+microsegundos. Nosotros no vemos nada de esto en nuestro codigo
+porque la libreria \texttt{Wire} de Arduino lo hace todo por
+nosotros.
+
+En la XIAO, los cables SDA y SCL entre el nRF52840 y el LSM6DS3TR-C
+estan \textbf{dentro de la placa}, son pistas de cobre en el
+circuito impreso. No tienes que conectar nada.
+
+
+% ============================================================
+\section{Bluetooth Low Energy (BLE): como los datos viajan al ordenador}
+% ============================================================
+
+\subsection{Que es Bluetooth y por que ``Low Energy''}
+
+Bluetooth es un estandar de comunicacion inalambrica por radio,
+operando en la banda de \textbf{2.4 GHz} (la misma frecuencia que
+el WiFi). Fue inventado en los años 90 para reemplazar cables cortos
+(auriculares, teclados, etc.).
+
+Existen dos ``sabores'' de Bluetooth:
+
+\begin{itemize}
+    \item \textbf{Bluetooth Clasico (BR/EDR)}: Diseñado para
+          transferir mucha informacion continua. Se usa para audio
+          (auriculares), transferencia de archivos, etc. Consume
+          bastante energia.
+
+    \item \textbf{Bluetooth Low Energy (BLE)}: Introducido en
+          Bluetooth 4.0 (2010). Diseñado para dispositivos que
+          envian \emph{poquitos datos de vez en cuando} y necesitan
+          que la bateria dure meses o años. Se usa en pulseras de
+          actividad, sensores, beacons, etc. \textbf{Es lo que
+          usamos nosotros.}
+\end{itemize}
+
+BLE no es una ``version menor'' del Bluetooth clasico. Es un
+protocolo \textbf{completamente diferente}, incompatible con el
+clasico. Un dispositivo BLE no puede hablar con uno clasico y
+viceversa (aunque muchos chips modernos, como el nRF52840,
+soportan ambos).
+
+\subsection{Roles en BLE: Peripheral y Central}
+
+En BLE siempre hay dos roles:
+
+\begin{itemize}
+    \item \textbf{Peripheral (periferico)}: Es el dispositivo
+          ``pequeño'' que \emph{ofrece datos}. En nuestro caso,
+          la XIAO. El periferico hace dos cosas:
+
+    \begin{enumerate}
+        \item \textbf{Advertising}: Antes de que nadie se conecte,
+              el periferico grita al aire ``!Estoy aqui! Me llamo
+              XIAO-IMU y tengo datos de sensores!'' repetidamente.
+              Esto lo hace emitiendo pequeños paquetes de radio
+              (31 bytes maximo) cada cierto intervalo (tipicamente
+              cada 100 milisegundos). Cualquiera que este escuchando
+              puede ver estos anuncios.
+
+        \item \textbf{Servidor GATT}: Una vez que alguien se conecta,
+              el periferico actua como un ``servidor'' que tiene
+              datos organizados en una estructura (la tabla GATT)
+              para que el central pueda leerlos.
+    \end{enumerate}
+
+    \item \textbf{Central}: Es el dispositivo ``grande'' que
+          \emph{consume datos}. En nuestro caso, tu ordenador.
+          El central:
+
+    \begin{enumerate}
+        \item \textbf{Escanea}: Escucha los paquetes de advertising
+              para descubrir que perifericos hay cerca.
+        \item \textbf{Se conecta}: Elige un periferico y establece
+              una conexion.
+        \item \textbf{Lee datos}: Accede a la tabla GATT del
+              periferico para obtener los valores de los sensores.
+    \end{enumerate}
+\end{itemize}
+
+\textbf{Analogia}: Piensa en una tienda. El periferico es la tienda
+que pone un cartel en la puerta (advertising) diciendo ``Tenemos
+frutas''. El central es el cliente que ve el cartel, entra (conexion),
+y mira el catalogo organizado (GATT) para pedir lo que quiere.
+
+
+% ============================================================
+\section{GATT: la estructura que organiza los datos en BLE}
+% ============================================================
+
+\subsection{Que es GATT y por que existe}
+
+GATT significa \textbf{Generic Attribute Profile}. Es la forma en
+que BLE organiza los datos que un dispositivo ofrece.
+
+\textbf{El problema que resuelve GATT:} Imagina que tu sensor envia
+bytes crudos por Bluetooth. Tu ordenador recibe, por ejemplo, 24
+bytes. ¿Que significan? ¿Los primeros 12 son el acelerometro y los
+siguientes 12 el giroscopio? ¿O son 6 valores de 4 bytes cada uno?
+¿O es todo un solo string de texto? Sin estructura, es imposible
+saberlo.
+
+GATT resuelve esto creando una \textbf{jerarquia organizada} donde
+cada dato tiene:
+\begin{itemize}
+    \item Un identificador unico (UUID)
+    \item Un tipo y tamaño definido
+    \item Propiedades que dicen que puedes hacer con el (leerlo,
+          escribirlo, recibir actualizaciones, etc.)
+\end{itemize}
+
+\subsection{La jerarquia GATT: Perfil, Servicio, Caracteristica}
+
+La estructura tiene tres niveles, de mas general a mas especifico:
+
+\begin{verbatim}
+  SERVIDOR GATT (todo el dispositivo)
+  |
+  +-- SERVICIO "IMU" (UUID: 19B10000-...)
+  |   |
+  |   +-- CARACTERISTICA "Acelerometro"
+  |   |     UUID: 19B10001-...
+  |   |     Valor: 12 bytes
+  |   |     Propiedades: READ, NOTIFY
+  |   |     +-- DESCRIPTOR CCCD (UUID: 0x2902)
+  |   |           Valor: 0x0000 o 0x0001
+  |   |
+  |   +-- CARACTERISTICA "Giroscopio"
+  |         UUID: 19B10002-...
+  |         Valor: 12 bytes
+  |         Propiedades: READ, NOTIFY
+  |         +-- DESCRIPTOR CCCD (UUID: 0x2902)
+  |               Valor: 0x0000 o 0x0001
+  |
+  +-- SERVICIO "Generic Access" (estandar BLE)
+  |     (nombre del dispositivo, apariencia, etc.)
+  |
+  +-- SERVICIO "Generic Attribute" (estandar BLE)
+        (control interno de GATT)
+\end{verbatim}
+
+Vamos a explicar cada nivel con calma:
+
+\subsubsection{Servidor GATT}
+
+Es todo el dispositivo. La XIAO entera actua como un servidor GATT.
+Cuando tu ordenador se conecta, lo primero que hace es pedir
+``muestrame todo lo que tienes'' (esto se llama \textbf{service
+discovery}). El servidor responde con la lista completa de
+servicios, caracteristicas y descriptores.
+
+\subsubsection{Servicio (Service)}
+
+Un servicio es un \textbf{grupo logico de datos relacionados}.
+En nuestro caso, creamos un servicio llamado ``IMU'' que contiene
+las caracteristicas del acelerometro y el giroscopio. Si tuvieramos
+tambien un sensor de temperatura, podriamos crear otro servicio
+``Environment'' con una caracteristica de temperatura.
+
+Cada servicio se identifica por un \textbf{UUID} (Universally Unique
+Identifier --- ``Identificador Unico Universal''). Es un numero de
+128 bits (16 bytes) que sirve como nombre unico.
+
+Existen dos tipos de UUIDs:
+
+\begin{itemize}
+    \item \textbf{UUIDs estandar (16 bits)}: Definidos oficialmente
+          por el Bluetooth SIG (la organizacion que gestiona el
+          estandar Bluetooth). Son UUIDs cortos que se expanden a
+          128 bits con una base fija. Ejemplo:
+          \texttt{0x180F} = servicio de bateria,
+          \texttt{0x180D} = servicio de ritmo cardiaco. Solo los
+          puede asignar el Bluetooth SIG.
+
+    \item \textbf{UUIDs custom (128 bits)}: Los creas tu. Como hay
+          $2^{128}$ combinaciones posibles (un numero de 39 digitos),
+          la probabilidad de colision es practicamente cero. Se
+          escriben en formato
+          \texttt{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}.
+          Puedes generar uno con el comando \texttt{uuidgen} en la
+          terminal de tu Mac.
+\end{itemize}
+
+Nosotros usamos UUIDs custom porque no existe un servicio estandar
+para ``datos raw de IMU''. El UUID que usamos es
+\texttt{19B10000-E8F2-537E-4F6C-D104768A1214}. Lo importante no es
+el numero en si, sino que sea \textbf{el mismo en Arduino y en
+Python}.
+
+\subsubsection{Caracteristica (Characteristic)}
+
+Es la \textbf{unidad minima de dato}. Cada caracteristica contiene:
+
+\begin{enumerate}
+    \item \textbf{UUID}: Para identificarla dentro del servicio.
+          Usamos \texttt{19B10001-...} para el acelerometro y
+          \texttt{19B10002-...} para el giroscopio.
+
+    \item \textbf{Valor}: Los bytes de datos propiamente dichos. En
+          nuestro caso, 12 bytes que representan tres numeros float
+          (ax, ay, az o gx, gy, gz).
+
+    \item \textbf{Propiedades}: Flags (banderas) que definen que
+          operaciones estan permitidas:
+
+    \begin{itemize}
+        \item \texttt{READ}: El central puede preguntar
+              ``¿cual es tu valor ahora?'' y la caracteristica
+              responde con sus bytes. Es como mirar un termometro:
+              tu miras y lees el numero.
+
+        \item \texttt{WRITE}: El central puede cambiar el valor. Se
+              usa para enviar comandos al periferico (ej: ``cambia
+              la frecuencia de muestreo a 50 Hz''). Nosotros no lo
+              usamos.
+
+        \item \texttt{NOTIFY}: La caracteristica envia su valor
+              \textbf{automaticamente} cada vez que cambia, sin que
+              el central lo pida. Es como suscribirte a un canal de
+              noticias: te llegan las actualizaciones solas.
+              \textbf{Esto es lo que usamos para streaming.}
+
+        \item \texttt{INDICATE}: Similar a NOTIFY pero con
+              confirmacion. El central responde ``recibido'' cada vez.
+              Mas lento pero garantiza entrega. No lo usamos porque
+              la velocidad es mas importante.
+    \end{itemize}
+\end{enumerate}
+
+\subsubsection{Descriptor (Descriptor)}
+
+Es metadata \emph{sobre} la caracteristica. El descriptor mas
+importante es el \textbf{CCCD} (Client Characteristic Configuration
+Descriptor, UUID \texttt{0x2902}).
+
+El CCCD es como un ``interruptor'' de notificaciones. Es un valor
+de 2 bytes que el central escribe para decir:
+
+\begin{itemize}
+    \item \texttt{0x0000}: ``No quiero notificaciones''
+          (apagado).
+    \item \texttt{0x0001}: ``Quiero recibir notificaciones''
+          (encendido).
+    \item \texttt{0x0002}: ``Quiero recibir indicaciones''
+          (con confirmacion).
+\end{itemize}
+
+Cuando tu llamas a \texttt{client.start\_notify()} en Python, bleak
+escribe \texttt{0x0001} en el CCCD de esa caracteristica. Cuando
+llamas a \texttt{client.stop\_notify()}, escribe \texttt{0x0000}.
+
+\textbf{¿Por que existe el CCCD?} Porque seria un desperdicio de
+energia que el periferico enviara datos constantemente si nadie los
+quiere. El CCCD permite al central decir ``estoy listo para
+recibir'' antes de que el periferico empiece a gastar energia
+enviando.
+
+\subsection{Conexion BLE paso a paso}
+
+Cuando tu script Python se conecta a la XIAO, esto es lo que ocurre
+por debajo:
+
+\begin{enumerate}
+    \item \textbf{Scan}: Tu Mac enciende su receptor Bluetooth y
+          escucha paquetes de advertising. Encuentra uno que dice
+          ``Me llamo XIAO-IMU''.
+
+    \item \textbf{Connection Request}: Tu Mac envia un paquete
+          \texttt{CONNECT\_REQ} a la XIAO con los parametros de
+          conexion deseados (intervalo, timeout, etc.).
+
+    \item \textbf{Connection Established}: La XIAO acepta. Ahora
+          ambos dejan de usar advertising y empiezan a comunicarse
+          en slots de tiempo reservados (esto se llama
+          ``connection events'').
+
+    \item \textbf{MTU Exchange}: Negocian el tamaño maximo de
+          paquete. MTU = Maximum Transmission Unit. Por defecto
+          son 23 bytes (20 de payload + 3 de cabecera). Se puede
+          negociar hasta 512 bytes.
+
+    \item \textbf{Service Discovery}: Tu Mac le pide a la XIAO
+          ``dime todos tus servicios y caracteristicas''. La XIAO
+          responde con la tabla GATT completa. Esto solo ocurre
+          una vez, al inicio.
+
+    \item \textbf{Enable Notifications}: Tu Mac escribe
+          \texttt{0x0001} en el CCCD de las caracteristicas que le
+          interesan.
+
+    \item \textbf{Data Streaming}: A partir de ahora, cada vez que
+          la XIAO actualiza el valor de una caracteristica, envia
+          un paquete de notificacion automaticamente.
+\end{enumerate}
+
+\subsection{Connection interval (intervalo de conexion)}
+
+Una vez conectados, el central y el periferico no estan comunicandose
+todo el tiempo. Eso consumiria demasiada energia. En su lugar,
+``despiertan'' el radio cada cierto intervalo, intercambian datos
+rapidamente, y vuelven a ``dormir''.
+
+Este intervalo se llama \textbf{connection interval} y se mide en
+unidades de 1.25 milisegundos. En nuestro codigo Arduino ponemos:
+
+\begin{lstlisting}[style=arduino]
+BLE.setConnectionInterval(8, 16);
+\end{lstlisting}
+
+Esto significa:
+\begin{itemize}
+    \item Minimo: $8 \times 1.25 = 10$ ms
+    \item Maximo: $16 \times 1.25 = 20$ ms
+\end{itemize}
+
+Es decir, cada 10--20 ms hay una oportunidad de enviar datos. Como
+nuestro sensor muestrea a $\sim$100 Hz (un dato cada 10 ms), un
+intervalo de 10 ms nos permite enviar cada muestra en tiempo real.
+
+\textbf{Nota:} Esto es una \emph{solicitud}, no una orden. El
+sistema operativo de tu Mac puede negociar un intervalo diferente.
+macOS, por ejemplo, raramente baja de 15 ms.
+
+
+% ============================================================
+\section{Numeros flotantes y bytes: como viajan los datos}
+% ============================================================
+
+\subsection{El problema: BLE solo envía bytes}
+
+BLE no sabe que es un ``float'' ni un ``entero''. Solo sabe enviar
+\textbf{bytes} (numeros enteros de 0 a 255). Si queremos enviar el
+numero $1.0234$ (un float), necesitamos convertirlo a una secuencia
+de bytes, enviarlo, y reconvertirlo en el otro lado.
+
+\subsection{IEEE 754: como un float se convierte en 4 bytes}
+
+Los ordenadores almacenan numeros decimales usando el estandar
+\textbf{IEEE 754}. Un \texttt{float} de 32 bits (4 bytes) se
+descompone asi:
+
+\begin{verbatim}
+  Bit:  31   30-23      22-0
+        [S] [EEEEEEEE] [MMMMMMMMMMMMMMMMMMMMMMM]
+         |   exponente   mantisa (parte fraccionaria)
+         signo
+\end{verbatim}
+
+\begin{itemize}
+    \item \textbf{S} (1 bit): 0 = positivo, 1 = negativo.
+    \item \textbf{E} (8 bits): Exponente. Determina el ``orden de
+          magnitud''. Se almacena con un sesgo de 127 (si E = 130,
+          el exponente real es $130 - 127 = 3$).
+    \item \textbf{M} (23 bits): Mantisa. La parte fraccionaria.
+          Hay un ``1.'' implicito delante, asi que 23 bits dan
+          24 bits efectivos de precision (unas 7 cifras decimales).
+\end{itemize}
+
+\textbf{Ejemplo con el numero 1.0:}
+\begin{itemize}
+    \item Signo: 0 (positivo)
+    \item Exponente: 127 (es decir, $2^0 = 1$). En binario: 01111111
+    \item Mantisa: 000...0 (porque $1.0 = 1.0 \times 2^0$, y la
+          parte fraccionaria es cero)
+\end{itemize}
+Resultado en binario: \texttt{0 01111111 00000000000000000000000}
+
+En hexadecimal: \texttt{0x3F800000}
+
+En bytes: \texttt{[0x3F, 0x80, 0x00, 0x00]}
+
+\subsection{Little-endian y Big-endian}
+
+Los 4 bytes de un float se pueden ordenar de dos formas:
+
+\begin{itemize}
+    \item \textbf{Big-endian}: El byte mas significativo va primero.
+          El numero \texttt{0x3F800000} se almacena como
+          \texttt{[3F, 80, 00, 00]}.
+    \item \textbf{Little-endian}: El byte menos significativo va
+          primero. \texttt{[00, 00, 80, 3F]}.
+\end{itemize}
+
+El procesador ARM Cortex-M4 (que esta dentro del nRF52840) usa
+\textbf{little-endian}. Los procesadores Intel/AMD y Apple Silicon
+de tu Mac tambien. Esto es conveniente: los bytes llegan en el
+mismo orden en que fueron escritos, sin necesidad de reordenar.
+
+En Python, indicamos el orden de bytes en el formato de
+\texttt{struct.unpack}:
+\begin{itemize}
+    \item \texttt{'<'} = little-endian
+    \item \texttt{'>'} = big-endian
+    \item \texttt{'f'} = un float de 32 bits (4 bytes)
+    \item \texttt{'<fff'} = tres floats little-endian = 12 bytes
+\end{itemize}
+
+\subsection{memcpy: copiar bytes crudos en Arduino}
+
+En el codigo Arduino, usamos \texttt{memcpy} para ``empaquetar''
+los floats en un array de bytes:
+
+\begin{lstlisting}[style=arduino]
+float ax = 1.0;           // 4 bytes en memoria
+uint8_t buffer[12];        // 12 bytes vacios
+memcpy(&buffer[0], &ax, 4); // copia los 4 bytes de ax al buffer
+\end{lstlisting}
+
+\texttt{memcpy} significa ``memory copy'' (copia de memoria). Sus
+parametros son:
+\begin{enumerate}
+    \item \textbf{destino}: \texttt{\&buffer[0]} --- la direccion de
+          memoria donde queremos copiar (posicion 0 del array).
+    \item \textbf{origen}: \texttt{\&ax} --- la direccion de memoria
+          donde esta el float. El \texttt{\&} significa ``la direccion
+          de''.
+    \item \textbf{cantidad}: \texttt{4} --- cuantos bytes copiar (un
+          float = 4 bytes).
+\end{enumerate}
+
+\texttt{memcpy} no sabe ni le importa que hay en esos bytes. Solo
+copia bytes de un sitio a otro. Esto es lo que necesitamos: tomar
+los 4 bytes que representan el float en memoria y ponerlos en
+nuestro buffer de envio BLE.
+
+
+% ============================================================
+\section{Las librerias: quien hizo que y como funciona por dentro}
+% ============================================================
+
+\subsection{Lado Arduino (firmware de la XIAO)}
+
+\subsubsection{ArduinoBLE}
+
+\begin{itemize}
+    \item \textbf{Proveedor}: Arduino (empresa/fundacion).
+    \item \textbf{Repositorio}:
+          \url{https://github.com/arduino-libraries/ArduinoBLE}
+    \item \textbf{Que hace}: Proporciona toda la funcionalidad BLE
+          en Arduino. Te permite crear servicios, caracteristicas,
+          hacer advertising, gestionar conexiones, etc.
+    \item \textbf{Como funciona por dentro}: ArduinoBLE es una capa
+          de abstraccion sobre el \textbf{SoftDevice} de Nordic
+          Semiconductor. El SoftDevice es un firmware propietario
+          (un blob binario, no puedes ver su codigo fuente) que
+          Nordic instala en parte de la memoria flash del nRF52840.
+          Este firmware controla directamente el hardware de radio
+          (el transceptor de 2.4 GHz, el sintetizador de frecuencia,
+          etc.). ArduinoBLE llama a las funciones del SoftDevice a
+          traves de la capa mbed-OS.
+
+          La cadena completa es:
+
+\begin{verbatim}
+  Tu codigo Arduino
+    -> ArduinoBLE (API amigable)
+      -> mbed-OS cordio (capa de abstraccion)
+        -> SoftDevice de Nordic (firmware del radio)
+          -> Hardware de radio del nRF52840
+\end{verbatim}
+\end{itemize}
+
+\subsubsection{Seeed\_Arduino\_LSM6DS3}
+
+\begin{itemize}
+    \item \textbf{Proveedor}: Seeed Studio (la empresa que fabrica
+          la XIAO).
+    \item \textbf{Repositorio}:
+          \url{https://github.com/Seeed-Studio/Seeed_Arduino_LSM6DS3}
+    \item \textbf{Que hace}: Permite leer datos del sensor
+          LSM6DS3TR-C de forma sencilla con funciones como
+          \texttt{readFloatAccelX()}.
+    \item \textbf{Como funciona por dentro}: Es un wrapper (envoltorio)
+          sobre el driver oficial de STMicroelectronics. Internamente
+          usa la libreria Wire para comunicarse por I$^2$C:
+
+\begin{verbatim}
+  myIMU.readFloatAccelX()
+    -> LSM6DS3::readRegisterInt16(OUTX_L_XL)
+      -> Wire.beginTransmission(0x6A)
+      -> Wire.write(0x28)     // registro a leer
+      -> Wire.endTransmission()
+      -> Wire.requestFrom(0x6A, 2)  // pedir 2 bytes
+      -> byte_low = Wire.read()
+      -> byte_high = Wire.read()
+    -> raw_value = (byte_high << 8) | byte_low
+    -> return raw_value * 0.000061  // convertir a g
+\end{verbatim}
+\end{itemize}
+
+\subsubsection{Wire}
+
+\begin{itemize}
+    \item \textbf{Proveedor}: Arduino (viene incluida con Arduino
+          IDE, es una ``core library'').
+    \item \textbf{Que hace}: Implementa el protocolo I$^2$C.
+    \item \textbf{Como funciona por dentro}: Configura los registros
+          de hardware del modulo I$^2$C del nRF52840 (llamado TWIM
+          --- Two-Wire Interface Master). Gestiona el timing de SCL,
+          los ACK/NACK, y las interrupciones.
+\end{itemize}
+
+\subsection{Lado Python (tu ordenador)}
+
+\subsubsection{bleak}
+
+\begin{itemize}
+    \item \textbf{Proveedor}: Henrik Blidh (desarrollador
+          independiente, proyecto open source).
+    \item \textbf{Repositorio}: \url{https://github.com/hbldh/bleak}
+    \item \textbf{PyPI}: \url{https://pypi.org/project/bleak/}
+    \item \textbf{Que hace}: Permite a Python comunicarse con
+          dispositivos BLE. Es la libreria estandar de facto para
+          BLE en Python.
+    \item \textbf{Como funciona por dentro}: bleak no controla el
+          Bluetooth directamente. Se apoya en las APIs del sistema
+          operativo:
+
+    \begin{itemize}
+        \item \textbf{macOS}: Usa \texttt{CoreBluetooth}, el framework
+              de Apple para BLE. Se comunica con el a traves de
+              \texttt{pyobjc} (un bridge que permite llamar a APIs
+              de Objective-C desde Python). Cuando llamas a
+              \texttt{BleakScanner.discover()}, bleak le dice a
+              CoreBluetooth ``escanea dispositivos BLE'', y
+              CoreBluetooth le pide al chip Bluetooth del Mac que
+              encienda el receptor y escuche paquetes de advertising.
+
+        \item \textbf{Linux}: Usa \texttt{BlueZ} (el stack Bluetooth
+              del kernel Linux) a traves de D-Bus (un sistema de
+              comunicacion entre procesos).
+
+        \item \textbf{Windows}: Usa \texttt{WinRT} (Windows Runtime
+              APIs) para acceder al Bluetooth.
+    \end{itemize}
+
+    La cadena en macOS es:
+
+\begin{verbatim}
+  Tu codigo Python
+    -> bleak (API asíncrona en Python)
+      -> pyobjc (bridge Python-Objective-C)
+        -> CoreBluetooth (framework de Apple)
+          -> Driver Bluetooth de macOS
+            -> Chip Bluetooth del Mac
+\end{verbatim}
+
+    \textbf{Toda la API de bleak es asincrona}. Esto significa que
+    usa \texttt{asyncio} y que todas las operaciones importantes
+    usan \texttt{async/await}. ¿Por que? Porque las operaciones BLE
+    (escanear, conectar, esperar notificaciones) pueden tardar un
+    tiempo indefinido, y no queremos que el programa se ``congele''
+    mientras espera.
+\end{itemize}
+
+\subsubsection{struct (biblioteca estandar de Python)}
+
+\begin{itemize}
+    \item \textbf{Proveedor}: Python Software Foundation (viene
+          incluido con Python, no hay que instalar nada).
+    \item \textbf{Que hace}: Convierte entre valores de Python (int,
+          float, etc.) y secuencias de bytes en formato C.
+    \item \textbf{Funcion que usamos}: \texttt{struct.unpack(formato,
+          bytes)}
+
+          Toma una secuencia de bytes y la descompone en valores de
+          Python segun el formato especificado. El formato
+          \texttt{'<fff'} significa:
+    \begin{itemize}
+        \item \texttt{<}: Los bytes estan en orden little-endian.
+        \item \texttt{f}: Un float de 32 bits (4 bytes).
+        \item Tres \texttt{f}: Tres floats = 12 bytes total.
+    \end{itemize}
+
+          Devuelve una \textbf{tupla} (tipo de dato inmutable de
+          Python) con los tres valores:
+          \texttt{(1.0234, -0.0012, 0.9876)}
+\end{itemize}
+
+\subsubsection{asyncio (biblioteca estandar de Python)}
+
+\begin{itemize}
+    \item \textbf{Proveedor}: Python Software Foundation (incluido
+          con Python 3.4+).
+    \item \textbf{Que hace}: Permite escribir codigo asíncrono
+          (que puede ``esperar'' sin bloquear el programa).
+    \item \textbf{Conceptos clave}:
+
+    \begin{itemize}
+        \item \textbf{Event loop} (bucle de eventos): Es el
+              ``corazon'' de asyncio. Es un bucle infinito que
+              revisa constantemente: ``¿hay algun evento nuevo?
+              ¿alguna operacion termino? ¿llego algun dato?''. Cuando
+              detecta algo, ejecuta el codigo correspondiente.
+
+              Analogia: imagina un camarero en un restaurante. En
+              vez de quedarse parado esperando a que la cocina
+              termine un plato, va a tomar nota de otras mesas.
+              Cuando la cocina avisa que un plato esta listo, el
+              camarero lo lleva. El event loop es ese camarero.
+
+        \item \textbf{Coroutine}: Una funcion definida con
+              \texttt{async def}. A diferencia de una funcion
+              normal, una coroutine puede ``pausarse'' (con
+              \texttt{await}) y reanudarse mas tarde. Cuando se
+              pausa, el event loop puede ejecutar otras coroutines.
+
+        \item \textbf{await}: Pausa la coroutine actual hasta que
+              la operacion termine. Durante la pausa, el event loop
+              puede hacer otras cosas (como procesar notificaciones
+              BLE entrantes).
+
+        \item \textbf{asyncio.run(coroutine)}: Crea un event loop,
+              ejecuta la coroutine, y limpia todo al terminar. Es
+              el punto de entrada para cualquier programa asincrono.
+
+        \item \textbf{asyncio.sleep(segundos)}: Pausa la coroutine
+              durante N segundos \textbf{sin bloquear el event loop}.
+              Si usaras \texttt{time.sleep()} en su lugar,
+              \emph{bloquearias} el event loop y no se procesarian
+              las notificaciones BLE mientras dure la pausa.
+    \end{itemize}
+\end{itemize}
+
+
+% ============================================================
+\part{El codigo explicado linea por linea}
+% ============================================================
+
+
+% ============================================================
+\section{Codigo Arduino completo}
+% ============================================================
+
+\subsection{Linea 1: \texttt{\#include <ArduinoBLE.h>}}
+
+\begin{lstlisting}[style=arduino]
+#include <ArduinoBLE.h>
+\end{lstlisting}
+
+\texttt{\#include} es una directiva del preprocesador de C++. Antes
+de compilar tu codigo, el preprocesador reemplaza esta linea por
+\textbf{todo el contenido} del archivo \texttt{ArduinoBLE.h}. Es
+como hacer copy-paste automatico de ese archivo.
+
+Los angulos \texttt{< >} indican que el archivo esta en las carpetas
+del sistema (librerias instaladas). Si usaramos comillas
+\texttt{" "}, buscaria en la carpeta del proyecto.
+
+Al incluir \texttt{ArduinoBLE.h}, traemos al scope (ambito) las
+siguientes clases y objetos:
+
+\begin{itemize}
+    \item \texttt{BLE}: Un objeto \textbf{singleton} global
+          (singleton = solo existe uno en todo el programa). Controla
+          el radio BLE del chip. Con el inicializas BLE, pones nombre,
+          empiezas advertising, etc.
+
+    \item \texttt{BLEService}: Clase para crear servicios GATT.
+          Un servicio es un contenedor de caracteristicas (como
+          explicamos antes).
+
+    \item \texttt{BLECharacteristic}: Clase para crear
+          caracteristicas GATT. Cada caracteristica almacena un
+          valor (array de bytes) y tiene propiedades (READ, NOTIFY,
+          etc.).
+
+    \item \texttt{BLEDevice}: Clase que representa un dispositivo
+          BLE conectado. Cuando un central se conecta a tu XIAO,
+          obtienes un objeto \texttt{BLEDevice} que representa a
+          ese central.
+\end{itemize}
+
+\subsection{Linea 2: \texttt{\#include "LSM6DS3.h"}}
+
+\begin{lstlisting}[style=arduino]
+#include "LSM6DS3.h"
+\end{lstlisting}
+
+Incluye la libreria del sensor IMU. Trae la clase \texttt{LSM6DS3}
+que abstrae toda la comunicacion I$^2$C con el chip sensor. Sin
+esta libreria, tendriamos que escribir manualmente los comandos
+I$^2$C para leer cada registro (decenas de lineas de codigo).
+
+Las comillas \texttt{" "} en vez de \texttt{< >} son una convencion:
+indican que es una libreria externa (no del core de Arduino),
+aunque en la practica ambas sintaxis funcionan igual.
+
+\subsection{Linea 3: \texttt{\#include "Wire.h"}}
+
+\begin{lstlisting}[style=arduino]
+#include "Wire.h"
+\end{lstlisting}
+
+Incluye la libreria Wire que implementa I$^2$C. Nosotros no la
+usamos directamente en nuestro codigo, pero la libreria LSM6DS3
+la necesita internamente. Sin este include, el compilador daria
+un error diciendo que no encuentra las funciones de Wire.
+
+\subsection{Linea 4: Crear el objeto IMU}
+
+\begin{lstlisting}[style=arduino]
+LSM6DS3 myIMU(I2C_MODE, 0x6A);
+\end{lstlisting}
+
+Crea una \textbf{instancia} (un objeto concreto) de la clase
+\texttt{LSM6DS3}. Le damos el nombre \texttt{myIMU}. Es como decir
+``crea un sensor de tipo LSM6DS3 y llamalo myIMU''.
+
+El \textbf{constructor} (la funcion que se ejecuta al crear el
+objeto) recibe dos parametros:
+
+\begin{enumerate}
+    \item \texttt{I2C\_MODE}: Una constante definida en la libreria.
+          Le dice al objeto que se comunique por I$^2$C (la
+          alternativa seria \texttt{SPI\_MODE}, otro protocolo de
+          comunicacion, pero la XIAO usa I$^2$C).
+
+    \item \texttt{0x6A}: La direccion I$^2$C del sensor. El
+          \texttt{0x} indica que es un numero en hexadecimal.
+          \texttt{6A} en hexadecimal = 106 en decimal. Esta direccion
+          viene predeterminada de fabrica en el chip.
+\end{enumerate}
+
+\textbf{Importante}: Crear el objeto no inicializa el sensor. Solo
+guarda los parametros en memoria. La inicializacion real ocurre
+cuando llamas a \texttt{myIMU.begin()}.
+
+Internamente, el constructor hace algo como:
+\begin{lstlisting}[style=arduino]
+// Pseudocodigo interno del constructor
+this->commMode = I2C_MODE;
+this->I2CAddress = 0x6A;
+this->accelRange = 2;     // default +/- 2g
+this->gyroRange = 245;    // default +/- 245 dps
+this->accelODR = 416;     // default 416 Hz
+this->gyroODR = 416;      // default 416 Hz
+\end{lstlisting}
+
+\subsection{Lineas 5--7: Crear servicio y caracteristicas BLE}
+
+\begin{lstlisting}[style=arduino]
+BLEService imuService("19B10000-E8F2-537E-4F6C-D104768A1214");
+\end{lstlisting}
+
+Crea un servicio GATT. El parametro es el \textbf{UUID del servicio}
+como string. Este UUID es un identificador unico que permite a los
+clientes (tu Python) encontrar este servicio especifico entre todos
+los servicios del dispositivo.
+
+\begin{lstlisting}[style=arduino]
+BLECharacteristic accelChar(
+    "19B10001-E8F2-537E-4F6C-D104768A1214",
+    BLERead | BLENotify,
+    12
+);
+\end{lstlisting}
+
+Crea una caracteristica GATT. Tres parametros:
+
+\begin{enumerate}
+    \item \textbf{UUID} (\texttt{"19B10001-..."}): Fijate que cambia
+          el \texttt{0001} respecto al servicio (\texttt{0000}). Esto
+          es una convencion para mantener los UUIDs relacionados.
+
+    \item \textbf{Propiedades} (\texttt{BLERead | BLENotify}):
+          \texttt{BLERead} y \texttt{BLENotify} son constantes
+          numericas (por ejemplo, \texttt{BLERead = 0x02} y
+          \texttt{BLENotify = 0x10}). El operador \texttt{|}
+          (OR de bits) las combina: $0x02 | 0x10 = 0x12$. Esto
+          crea un unico byte donde los bits de READ y NOTIFY estan
+          activados.
+
+    \item \textbf{Tamaño} (\texttt{12}): Tamaño maximo del valor en
+          bytes. Necesitamos 12 porque enviamos 3 floats:
+          $3 \times 4 = 12$ bytes.
+\end{enumerate}
+
+La caracteristica del giroscopio es identica pero con UUID
+\texttt{0002}:
+
+\begin{lstlisting}[style=arduino]
+BLECharacteristic gyroChar(
+    "19B10002-E8F2-537E-4F6C-D104768A1214",
+    BLERead | BLENotify,
+    12
+);
+\end{lstlisting}
+
+\subsection{Funcion setup(): inicializacion}
+
+\begin{lstlisting}[style=arduino]
+void setup() {
+\end{lstlisting}
+
+\texttt{setup()} es una funcion especial de Arduino que se ejecuta
+\textbf{una sola vez} al encender la placa. Aqui va toda la
+inicializacion. \texttt{void} significa que la funcion no devuelve
+ningun valor.
+
+\begin{lstlisting}[style=arduino]
+  Serial.begin(115200);
+\end{lstlisting}
+
+Inicializa la comunicacion serie por USB. \texttt{Serial} es un
+objeto global que representa el puerto USB de la XIAO. Cuando la
+XIAO esta conectada por USB al ordenador, puedes ver mensajes de
+debug en el ``Monitor Serie'' del Arduino IDE.
+
+\texttt{115200} es la velocidad en \textbf{baudios} (bits por
+segundo). Es una velocidad estandar rapida. Tanto el emisor (XIAO)
+como el receptor (tu ordenador) deben usar la misma velocidad.
+
+\begin{lstlisting}[style=arduino]
+  if (myIMU.begin() != 0) {
+    Serial.println("IMU error");
+    while (1);
+  }
+\end{lstlisting}
+
+\texttt{myIMU.begin()} inicializa el sensor. Internamente hace:
+
+\begin{enumerate}
+    \item Llama a \texttt{Wire.begin()} para inicializar el bus
+          I$^2$C (configura los pines SDA/SCL, activa el modulo
+          de hardware I$^2$C del nRF52840).
+
+    \item Lee el registro \texttt{WHO\_AM\_I} (direccion
+          \texttt{0x0F}) del sensor. Este registro siempre contiene
+          el valor \texttt{0x6A}. Es como preguntarle al sensor
+          ``¿quien eres?'' para confirmar que esta ahi y funciona.
+
+    \item Escribe en los registros de configuracion del sensor
+          para establecer los rangos, frecuencias de muestreo, y
+          filtros por defecto.
+
+    \item Devuelve \texttt{0} si todo fue bien, o un numero distinto
+          de cero si algo fallo (por ejemplo, si el sensor no
+          respondio al \texttt{WHO\_AM\_I}).
+\end{enumerate}
+
+Si falla (\texttt{!= 0}), imprime un mensaje de error y entra en
+\texttt{while(1)}: un bucle infinito que detiene el programa. Esto
+es un patron comun en embedded: si algo critico falla en la
+inicializacion, es mejor parar que seguir con un sistema roto.
+
+\begin{lstlisting}[style=arduino]
+  if (!BLE.begin()) {
+    Serial.println("BLE failed!");
+    while (1);
+  }
+\end{lstlisting}
+
+\texttt{BLE.begin()} inicializa el stack BLE. Internamente:
+
+\begin{enumerate}
+    \item Inicializa el SoftDevice de Nordic (el firmware
+          propietario que controla el radio de 2.4 GHz).
+    \item Reserva memoria RAM para las estructuras BLE (tabla GATT,
+          buffers de conexion, colas de paquetes).
+    \item Configura las interrupciones de hardware para que el
+          radio pueda avisar al procesador cuando llega un paquete.
+    \item Devuelve \texttt{true} si todo fue bien, \texttt{false}
+          si fallo.
+\end{enumerate}
+
+El \texttt{!} (NOT) niega el valor: si \texttt{begin()} devuelve
+\texttt{false} (fallo), \texttt{!false = true}, y entramos al
+bloque de error.
+
+\begin{lstlisting}[style=arduino]
+  BLE.setLocalName("XIAO-IMU");
+\end{lstlisting}
+
+Establece el nombre que aparecera en los paquetes de advertising.
+Cuando hagas un scan BLE desde tu Mac o telefono, veras ``XIAO-IMU''
+en la lista. Este nombre se incluye en el paquete de advertising
+como un campo de tipo ``Complete Local Name''. Limite: 29 caracteres.
+
+\begin{lstlisting}[style=arduino]
+  BLE.setAdvertisedService(imuService);
+\end{lstlisting}
+
+Le dice al stack BLE que incluya el UUID de nuestro servicio IMU en
+los paquetes de advertising. Esto permite que los centrales puedan
+filtrar por servicio antes de conectarse. Sin esta linea, el
+dispositivo se anunciaria sin decir que servicios tiene, y el central
+tendria que conectarse ``a ciegas'' para descubrirlo.
+
+\begin{lstlisting}[style=arduino]
+  imuService.addCharacteristic(accelChar);
+  imuService.addCharacteristic(gyroChar);
+\end{lstlisting}
+
+Asocia las caracteristicas al servicio. Construye la jerarquia GATT.
+Internamente, el servicio mantiene una lista enlazada de
+caracteristicas. Al añadir una, se agrega al final de esa lista.
+
+\begin{lstlisting}[style=arduino]
+  BLE.addService(imuService);
+\end{lstlisting}
+
+Registra el servicio completo (con todas sus caracteristicas) en la
+tabla GATT del stack BLE. A partir de ahora, el servicio ``existe''
+y sera visible para cualquier central que se conecte y haga service
+discovery.
+
+\begin{lstlisting}[style=arduino]
+  BLE.setConnectionInterval(8, 16);
+\end{lstlisting}
+
+Ya lo explicamos en la seccion de connection interval. Pedimos un
+intervalo de 10--20 ms.
+
+\begin{lstlisting}[style=arduino]
+  BLE.advertise();
+\end{lstlisting}
+
+Empieza a emitir paquetes de advertising. A partir de este momento,
+la XIAO es visible para cualquier scanner BLE. Los paquetes se
+emiten aproximadamente cada 100 ms hasta que alguien se conecte.
+
+\subsection{Funcion loop(): el bucle principal}
+
+\begin{lstlisting}[style=arduino]
+void loop() {
+  BLEDevice central = BLE.central();
+\end{lstlisting}
+
+\texttt{loop()} se ejecuta en bucle infinito despues de
+\texttt{setup()}. Es el ``main loop'' del programa.
+
+\texttt{BLE.central()} comprueba si hay un dispositivo central
+conectado. Devuelve un objeto \texttt{BLEDevice}:
+\begin{itemize}
+    \item Si hay conexion: devuelve un objeto valido que contiene la
+          direccion MAC del central.
+    \item Si no hay conexion: devuelve un objeto ``vacio'' que
+          evalua a \texttt{false} en un \texttt{if}.
+\end{itemize}
+
+\begin{lstlisting}[style=arduino]
+  if (central) {
+    Serial.println("Connected");
+    while (central.connected()) {
+\end{lstlisting}
+
+Si hay un central conectado, entramos en un bucle \texttt{while}
+que continua mientras la conexion este activa.
+\texttt{central.connected()} devuelve \texttt{false} cuando:
+\begin{itemize}
+    \item El central se desconecta voluntariamente.
+    \item Se pierde la conexion (la XIAO se aleja demasiado, hay
+          interferencia, etc.).
+    \item Pasan mas de 4 segundos sin comunicacion (supervision
+          timeout).
+\end{itemize}
+
+\begin{lstlisting}[style=arduino]
+      float ax = myIMU.readFloatAccelX();
+      float ay = myIMU.readFloatAccelY();
+      float az = myIMU.readFloatAccelZ();
+      float gx = myIMU.readFloatGyroX();
+      float gy = myIMU.readFloatGyroY();
+      float gz = myIMU.readFloatGyroZ();
+\end{lstlisting}
+
+Lee los 6 valores del IMU. Cada llamada a \texttt{readFloat...()}:
+\begin{enumerate}
+    \item Envia un comando I$^2$C al sensor pidiendo 2 bytes del
+          registro correspondiente.
+    \item Recibe los 2 bytes (un entero de 16 bits con signo).
+    \item Multiplica por el factor de escala para convertir a
+          unidades fisicas.
+    \item Devuelve un \texttt{float} (numero decimal de 32 bits).
+\end{enumerate}
+
+El acelerometro devuelve valores en \textbf{g} (1g $\approx$
+9.81 m/s$^2$). En reposo: $a_x \approx 0, a_y \approx 0,
+a_z \approx 1.0$.
+
+El giroscopio devuelve valores en \textbf{grados/segundo}. En
+reposo: $g_x \approx 0, g_y \approx 0, g_z \approx 0$.
+
+\begin{lstlisting}[style=arduino]
+      uint8_t accelBuf[12];
+      memcpy(&accelBuf[0], &ax, 4);
+      memcpy(&accelBuf[4], &ay, 4);
+      memcpy(&accelBuf[8], &az, 4);
+      accelChar.writeValue(accelBuf, 12);
+\end{lstlisting}
+
+\texttt{uint8\_t accelBuf[12]}: Declara un array de 12 bytes en la
+pila (stack). \texttt{uint8\_t} = unsigned integer de 8 bits = un
+byte (valor de 0 a 255).
+
+Las tres lineas de \texttt{memcpy} copian los bytes crudos de cada
+float al buffer. Despues de ejecutarse, el buffer contiene:
+
+\begin{verbatim}
+  Posicion:  0  1  2  3    4  5  6  7    8  9 10 11
+  Contenido: [--- ax ---]  [--- ay ---]  [--- az ---]
+             4 bytes       4 bytes       4 bytes
+\end{verbatim}
+
+\texttt{accelChar.writeValue(accelBuf, 12)}: Actualiza el valor de
+la caracteristica GATT. Internamente:
+\begin{enumerate}
+    \item Copia los 12 bytes al buffer interno de la caracteristica.
+    \item Si un central esta suscrito a notificaciones (escribio
+          0x0001 en el CCCD), encola un paquete de notificacion
+          BLE.
+    \item El paquete se transmitira por radio en el siguiente
+          connection event (el proximo ``despertar'' del intervalo
+          de conexion).
+\end{enumerate}
+
+El bloque del giroscopio es identico:
+
+\begin{lstlisting}[style=arduino]
+      uint8_t gyroBuf[12];
+      memcpy(&gyroBuf[0], &gx, 4);
+      memcpy(&gyroBuf[4], &gy, 4);
+      memcpy(&gyroBuf[8], &gz, 4);
+      gyroChar.writeValue(gyroBuf, 12);
+\end{lstlisting}
+
+\begin{lstlisting}[style=arduino]
+      delay(10);
+\end{lstlisting}
+
+Pausa la ejecucion 10 milisegundos. Esto limita la frecuencia de
+muestreo a aproximadamente $1/0.010 = 100$ Hz.
+
+\textbf{¿Por que ``aproximadamente''?} Porque las lecturas I$^2$C
+(6 transacciones) y los envios BLE (2 \texttt{writeValue}) tambien
+tardan tiempo (1--3 ms en total). Asi que el ciclo real es de
+$\sim$12 ms, dando $\sim$83 Hz. Para la mayoria de aplicaciones
+de IMU esto es suficiente.
+
+\begin{lstlisting}[style=arduino]
+    }
+    Serial.println("Disconnected");
+  }
+}
+\end{lstlisting}
+
+Cuando el central se desconecta, sale del \texttt{while} e imprime
+``Disconnected''. El \texttt{loop()} vuelve a empezar: llama de
+nuevo a \texttt{BLE.central()}, que no encuentra conexion, asi que
+no entra al \texttt{if}, y el loop se repite. El advertising se
+reanuda automaticamente cuando no hay conexion activa, asi que la
+XIAO vuelve a ser visible para nuevas conexiones.
+
+
+% ============================================================
+\section{Codigo Python completo}
+% ============================================================
+
+\subsection{Imports}
+
+\begin{lstlisting}[style=python]
+import asyncio
+\end{lstlisting}
+
+Importa el modulo \texttt{asyncio}. Ya explicamos a fondo que es
+asyncio en la seccion de librerias. En resumen: nos permite
+escribir codigo que ``espera'' (conexion BLE, datos, etc.) sin
+congelar el programa.
+
+\begin{lstlisting}[style=python]
+import struct
+\end{lstlisting}
+
+Importa el modulo \texttt{struct}. Lo usamos para convertir los
+bytes que llegan por BLE de vuelta a numeros float.
+
+\begin{lstlisting}[style=python]
+import time
+\end{lstlisting}
+
+Importa el modulo \texttt{time}. Lo usamos para obtener timestamps
+(\texttt{time.time()} devuelve los segundos desde el 1 de enero de
+1970, con precision de microsegundos).
+
+\begin{lstlisting}[style=python]
+from bleak import BleakClient, BleakScanner
+\end{lstlisting}
+
+Importa dos clases de bleak:
+
+\begin{itemize}
+    \item \texttt{BleakScanner}: Para escanear dispositivos BLE
+          cercanos. Es como ``mirar que hay en el aire''.
+    \item \texttt{BleakClient}: Para conectarse a un dispositivo
+          especifico y comunicarse con el (leer/escribir
+          caracteristicas, suscribirse a notificaciones, etc.).
+\end{itemize}
+
+\subsection{Constantes}
+
+\begin{lstlisting}[style=python]
+ACCEL_UUID = "19b10001-e8f2-537e-4f6c-d104768a1214"
+GYRO_UUID  = "19b10002-e8f2-537e-4f6c-d104768a1214"
+\end{lstlisting}
+
+Los UUIDs de las caracteristicas GATT. \textbf{Deben coincidir
+exactamente} con los del sketch Arduino. Estan en minusculas porque
+bleak normaliza todos los UUIDs a minusculas internamente.
+
+Estos strings son la ``direccion'' que Python usara para decirle a
+bleak ``quiero los datos de esta caracteristica especifica''.
+
+\subsection{Variables globales}
+
+\begin{lstlisting}[style=python]
+latest_accel = (0, 0, 0)
+latest_gyro = (0, 0, 0)
+\end{lstlisting}
+
+Tuplas que almacenan la ultima lectura recibida. Las inicializamos
+en $(0, 0, 0)$. Se actualizan desde los callbacks cada vez que
+llega una notificacion.
+
+\textbf{¿Que es una tupla?} Es un tipo de dato de Python similar a
+una lista, pero inmutable (no se puede modificar una vez creada).
+Se escribe con parentesis: \texttt{(1, 2, 3)}. Usamos tuplas porque
+\texttt{struct.unpack} devuelve tuplas.
+
+\textbf{¿Por que \texttt{global}?} En Python, si quieres modificar
+una variable definida fuera de una funcion desde dentro de esa
+funcion, debes declararla como \texttt{global}. Sin esa declaracion,
+Python crearia una variable local con el mismo nombre (y la global
+no se modificaria).
+
+\subsection{Callbacks (funciones que se llaman automaticamente)}
+
+\begin{lstlisting}[style=python]
+def accel_handler(_, data: bytearray):
+    global latest_accel
+    latest_accel = struct.unpack('<fff', data)
+    ax, ay, az = latest_accel
+    print(f"Accel: x={ax:.4f}  y={ay:.4f}  z={az:.4f} g")
+\end{lstlisting}
+
+Esta funcion se ejecuta \textbf{automaticamente} cada vez que la
+XIAO envia una notificacion de la caracteristica del acelerometro.
+Nosotros nunca la llamamos directamente; la registramos con
+\texttt{start\_notify} y bleak la llama cuando llegan datos.
+
+Parametros:
+\begin{itemize}
+    \item \texttt{\_}: Es el objeto
+          \texttt{BleakGATTCharacteristic} que origino la
+          notificacion. Lo nombramos \texttt{\_} porque no lo
+          necesitamos. En Python, \texttt{\_} es una convencion
+          para ``variable que no me importa''.
+
+    \item \texttt{data: bytearray}: Los bytes crudos que llegaron
+          por BLE. \texttt{bytearray} es un tipo de Python: una
+          secuencia mutable de bytes. Contendra exactamente 12
+          bytes (los 3 floats que empaquetamos en Arduino).
+          El \texttt{: bytearray} es un ``type hint'' (anotacion
+          de tipo): no cambia el comportamiento del codigo, solo
+          documenta que tipo de dato se espera.
+\end{itemize}
+
+Cuerpo:
+\begin{itemize}
+    \item \texttt{global latest\_accel}: Declara que vamos a
+          modificar la variable global.
+
+    \item \texttt{struct.unpack('<fff', data)}: Toma los 12 bytes
+          de \texttt{data} y los desempaqueta como 3 floats
+          little-endian. Devuelve una tupla, por ejemplo
+          \texttt{(0.0234, -0.0012, 0.9876)}.
+
+    \item \texttt{ax, ay, az = latest\_accel}: ``Destructuring'' o
+          ``unpacking''. Asigna cada elemento de la tupla a una
+          variable individual. Es equivalente a:
+\begin{lstlisting}[style=python]
+ax = latest_accel[0]
+ay = latest_accel[1]
+az = latest_accel[2]
+\end{lstlisting}
+
+    \item \texttt{print(f"...")}: ``f-string'' (formatted string
+          literal). Las expresiones entre \texttt{\{\}} se evaluan
+          y se insertan en el string. \texttt{:.4f} formatea el
+          float con 4 decimales.
+\end{itemize}
+
+El handler del giroscopio es identico pero con \texttt{:.2f}
+(2 decimales):
+
+\begin{lstlisting}[style=python]
+def gyro_handler(_, data: bytearray):
+    global latest_gyro
+    latest_gyro = struct.unpack('<fff', data)
+    gx, gy, gz = latest_gyro
+    print(f"Gyro:  x={gx:.2f}  y={gy:.2f}  z={gz:.2f} deg/s")
+\end{lstlisting}
+
+\textbf{¿Como llega la notificacion al callback?} La cadena es:
+\begin{enumerate}
+    \item La XIAO actualiza el valor de la caracteristica y el radio
+          BLE envia un paquete de notificacion.
+    \item El chip Bluetooth de tu Mac recibe el paquete.
+    \item CoreBluetooth (macOS) procesa el paquete y notifica a
+          bleak a traves de un ``delegate'' de Objective-C.
+    \item bleak pone el evento en la cola del event loop de asyncio.
+    \item El event loop ejecuta tu callback con los datos.
+\end{enumerate}
+
+Todo esto ocurre en milisegundos.
+
+\subsection{Funcion principal}
+
+\begin{lstlisting}[style=python]
+async def main():
+\end{lstlisting}
+
+Define \texttt{main} como una \textbf{coroutine asincrona}.
+\texttt{async def} es como \texttt{def} pero indica que la funcion
+puede usar \texttt{await} y puede pausarse/reanudarse.
+
+\begin{lstlisting}[style=python]
+    print("Scanning...")
+    device = await BleakScanner.find_device_by_name(
+        "XIAO-IMU", timeout=10.0
+    )
+\end{lstlisting}
+
+Escanea dispositivos BLE buscando uno con nombre ``XIAO-IMU''.
+
+\texttt{BleakScanner.find\_device\_by\_name()} es un metodo
+\textbf{de clase} (se llama en la clase, no en una instancia). Es
+asincrono, por eso usamos \texttt{await}.
+
+Internamente:
+\begin{enumerate}
+    \item Crea un objeto \texttt{BleakScanner}.
+    \item Llama a CoreBluetooth para empezar a escanear.
+    \item CoreBluetooth activa el receptor Bluetooth y empieza a
+          escuchar paquetes de advertising.
+    \item Por cada paquete recibido, compara el campo
+          ``Local Name'' con \texttt{"XIAO-IMU"}.
+    \item Si encuentra coincidencia, para el scan y devuelve un
+          objeto \texttt{BLEDevice} con la informacion del
+          dispositivo.
+    \item Si pasan 10 segundos sin encontrarlo, devuelve
+          \texttt{None}.
+\end{enumerate}
+
+El \texttt{await} pausa la coroutine \texttt{main()} mientras el
+scan esta activo. El event loop queda libre para procesar otros
+eventos (aunque en este caso no hay otros).
+
+\begin{lstlisting}[style=python]
+    if not device:
+        print("XIAO-IMU not found!")
+        return
+\end{lstlisting}
+
+Si \texttt{device} es \texttt{None} (no se encontro), muestra un
+mensaje y termina la funcion. \texttt{return} en una coroutine
+asincrona la finaliza y devuelve \texttt{None}.
+
+\begin{lstlisting}[style=python]
+    print(f"Found: {device.address}")
+\end{lstlisting}
+
+Imprime la direccion del dispositivo. En macOS, la ``direccion''
+no es una MAC real (Apple la oculta por privacidad) sino un UUID
+de CoreBluetooth. En Linux si veras la MAC real (algo como
+\texttt{A4:CF:12:8B:3E:D2}).
+
+\begin{lstlisting}[style=python]
+    async with BleakClient(device, timeout=20.0) as client:
+\end{lstlisting}
+
+Esto hace varias cosas a la vez:
+
+\begin{enumerate}
+    \item \textbf{\texttt{BleakClient(device, timeout=20.0)}}:
+          Crea un objeto cliente BLE configurado para conectarse
+          al dispositivo encontrado. \texttt{timeout=20.0} es el
+          tiempo maximo en segundos para establecer la conexion.
+
+    \item \textbf{\texttt{async with ... as client}}: Es un
+          ``context manager asincrono''. Es un patron de Python que
+          garantiza limpieza de recursos. Equivale a:
+
+\begin{lstlisting}[style=python]
+client = BleakClient(device, timeout=20.0)
+await client.connect()   # se conecta
+try:
+    # ... tu codigo ...
+finally:
+    await client.disconnect()  # SIEMPRE desconecta
+\end{lstlisting}
+
+          La ventaja del \texttt{async with} es que la desconexion
+          ocurre \textbf{siempre}, incluso si hay un error o
+          excepcion dentro del bloque. Asi no dejas conexiones BLE
+          abiertas ``colgadas''.
+\end{enumerate}
+
+Al entrar al bloque, bleak:
+\begin{enumerate}
+    \item Pide a CoreBluetooth que establezca conexion con el
+          periferico.
+    \item Espera la confirmacion de conexion.
+    \item Ejecuta \textbf{service discovery}: le pide al periferico
+          su tabla GATT completa y la almacena en
+          \texttt{client.services}.
+\end{enumerate}
+
+\begin{lstlisting}[style=python]
+        print(f"Connected: {client.is_connected}")
+\end{lstlisting}
+
+\texttt{client.is\_connected} es una propiedad (no una funcion,
+por eso no lleva parentesis) que devuelve \texttt{True} si hay una
+conexion BLE activa.
+
+\begin{lstlisting}[style=python]
+        await client.start_notify(ACCEL_UUID, accel_handler)
+        await client.start_notify(GYRO_UUID, gyro_handler)
+\end{lstlisting}
+
+\textbf{Esta es la linea mas importante de todo el programa Python.}
+
+\texttt{start\_notify(uuid, callback)} hace:
+
+\begin{enumerate}
+    \item Busca la caracteristica por UUID en la tabla GATT que se
+          obtuvo durante service discovery.
+    \item Verifica que la caracteristica tenga la propiedad NOTIFY
+          (si no, lanza una excepcion).
+    \item Escribe \texttt{0x0001} (2 bytes, little-endian) en el
+          \textbf{CCCD} (descriptor \texttt{0x2902}) de esa
+          caracteristica. Esto le dice a la XIAO: ``activa las
+          notificaciones para esta caracteristica''.
+    \item Registra \texttt{callback} (nuestra funcion
+          \texttt{accel\_handler}) en un diccionario interno de
+          bleak, indexado por el ``handle'' (identificador numerico
+          interno) de la caracteristica.
+    \item A partir de ahora, cada vez que la XIAO haga
+          \texttt{writeValue()} en esa caracteristica, el stack BLE
+          enviara los datos y bleak llamara a nuestro callback.
+\end{enumerate}
+
+\begin{lstlisting}[style=python]
+        print("Streaming... Ctrl+C to stop\n")
+\end{lstlisting}
+
+Mensaje informativo. \texttt{\textbackslash n} es un salto de linea
+extra.
+
+\begin{lstlisting}[style=python]
+        try:
+            while True:
+                await asyncio.sleep(1.0)
+        except KeyboardInterrupt:
+            pass
+\end{lstlisting}
+
+Este bloque mantiene el programa vivo mientras recibe datos:
+
+\begin{itemize}
+    \item \texttt{while True}: Bucle infinito. Sin esto, la funcion
+          terminaria inmediatamente y se cerraria la conexion BLE.
+
+    \item \texttt{await asyncio.sleep(1.0)}: Pausa la coroutine 1
+          segundo. \textbf{Importantisimo}: usamos
+          \texttt{asyncio.sleep} (asincrono) y NO \texttt{time.sleep}
+          (sincrono). La diferencia:
+
+    \begin{itemize}
+        \item \texttt{asyncio.sleep}: Pausa \emph{solo esta
+              coroutine}. El event loop sigue activo y puede
+              procesar notificaciones BLE. Los callbacks se ejecutan
+              normalmente durante la pausa.
+        \item \texttt{time.sleep}: Bloquea \emph{todo el hilo},
+              incluyendo el event loop. Ninguna notificacion BLE se
+              procesaria durante la pausa. Los datos se perderian.
+    \end{itemize}
+
+    \item \texttt{except KeyboardInterrupt}: Captura la excepcion
+          que se genera cuando presionas Ctrl+C en la terminal.
+          \texttt{pass} significa ``no hacer nada especial, solo
+          salir del bucle limpiamente''. Sin este try/except, al
+          pulsar Ctrl+C verias un traceback de error feo.
+\end{itemize}
+
+\begin{lstlisting}[style=python]
+        await client.stop_notify(ACCEL_UUID)
+        await client.stop_notify(GYRO_UUID)
+\end{lstlisting}
+
+Cancela las suscripciones. Internamente:
+\begin{enumerate}
+    \item Escribe \texttt{0x0000} en el CCCD de cada caracteristica
+          (``apaga notificaciones'').
+    \item Elimina los callbacks del diccionario interno de bleak.
+\end{enumerate}
+
+No es estrictamente necesario porque \texttt{disconnect()} tambien
+limpia todo, pero es buena practica hacer un cierre ordenado.
+
+\begin{lstlisting}[style=python]
+    print("Disconnected.")
+\end{lstlisting}
+
+Al salir del \texttt{async with}, bleak llama automaticamente a
+\texttt{client.disconnect()}, que:
+\begin{enumerate}
+    \item Envia un paquete de terminacion de conexion BLE.
+    \item Libera los recursos del radio Bluetooth en el SO.
+    \item La XIAO detecta la desconexion y sale del
+          \texttt{while(central.connected())}.
+\end{enumerate}
+
+\subsection{Punto de entrada}
+
+\begin{lstlisting}[style=python]
+if __name__ == "__main__":
+    asyncio.run(main())
+\end{lstlisting}
+
+\begin{itemize}
+    \item \texttt{if \_\_name\_\_ == "\_\_main\_\_"}: Comprueba si
+          este archivo se esta ejecutando directamente (no
+          importado como modulo). \texttt{\_\_name\_\_} es una
+          variable especial que Python establece automaticamente:
+    \begin{itemize}
+        \item Si ejecutas \texttt{python script.py}:
+              \texttt{\_\_name\_\_ = "\_\_main\_\_"}
+        \item Si haces \texttt{import script}:
+              \texttt{\_\_name\_\_ = "script"}
+    \end{itemize}
+
+    \item \texttt{asyncio.run(main())}: Punto de entrada del
+          programa asincrono. Hace tres cosas:
+    \begin{enumerate}
+        \item Crea un nuevo event loop.
+        \item Ejecuta la coroutine \texttt{main()} hasta que
+              termine.
+        \item Cierra el event loop y limpia todos los recursos.
+    \end{enumerate}
+
+    \textbf{Nota para Jupyter Notebook}: En un notebook, ya hay un
+    event loop ejecutandose (el del propio notebook). Llamar a
+    \texttt{asyncio.run()} dentro de un event loop existente da
+    error. En su lugar, usa directamente:
+\begin{lstlisting}[style=python]
+await main()
+\end{lstlisting}
+\end{itemize}
+
+
+% ============================================================
+\part{Apendices}
+% ============================================================
+
+
+% ============================================================
+\section{Extension: guardar datos en CSV}
+% ============================================================
+
+Para alimentar tus notebooks de Madgwick con datos BLE:
+
+\begin{lstlisting}[style=python]
+import csv
+
+# Abrir archivo CSV al inicio
+csv_file = open('data/ble_capture.csv', 'w', newline='')
+writer = csv.writer(csv_file)
+writer.writerow([
+    'timestamp',
+    'accel_x', 'accel_y', 'accel_z',
+    'gyro_x', 'gyro_y', 'gyro_z'
+])
+
+def accel_handler(_, data: bytearray):
+    global latest_accel
+    latest_accel = struct.unpack('<fff', data)
+
+def gyro_handler(_, data: bytearray):
+    global latest_gyro
+    latest_gyro = struct.unpack('<fff', data)
+    # Escribir al CSV cuando llega el gyro
+    t = time.time()
+    ax, ay, az = latest_accel
+    gx, gy, gz = latest_gyro
+    writer.writerow([t, ax, ay, az, gx, gy, gz])
+\end{lstlisting}
+
+
+% ============================================================
+\section{Diagnostico y solucion de problemas}
+% ============================================================
+
+\subsection{El dispositivo no aparece en el scan}
+
+\begin{itemize}
+    \item Verifica que el sketch Arduino se cargo correctamente
+          (abre el Monitor Serie y busca ``Advertising as XIAO-IMU'').
+    \item Asegura que no hay otro dispositivo ya conectado a la
+          XIAO (BLE solo permite una conexion simultanea por defecto).
+    \item En macOS: Preferencias del Sistema > Bluetooth > verificar
+          que esta activado.
+    \item El nombre es case-sensitive: ``XIAO-IMU'' $\neq$
+          ``xiao-imu''.
+    \item Aumenta el timeout del scan a 15--20 segundos.
+\end{itemize}
+
+\subsection{Se conecta pero no llegan datos}
+
+\begin{itemize}
+    \item Verifica que los UUIDs en Python son \textbf{identicos} a
+          los del Arduino (copia y pega, no escribas a mano).
+    \item Verifica que \texttt{myIMU.begin()} devolvio 0 (Monitor
+          Serie).
+    \item Ejecuta un script que liste servicios y caracteristicas
+          para ver que expone realmente el dispositivo.
+\end{itemize}
+
+\subsection{Los valores no tienen sentido}
+
+\begin{itemize}
+    \item Verifica que usas \texttt{'<fff'} (little-endian) y no
+          \texttt{'>fff'} (big-endian).
+    \item Verifica que \texttt{len(data) == 12}. Si es diferente,
+          el empaquetado no coincide.
+    \item En reposo, el acelerometro debe leer $\approx (0, 0, 1)$ g
+          y el giroscopio $\approx (0, 0, 0)$ dps.
+\end{itemize}
+
+
+% ============================================================
+\section{Referencias}
+% ============================================================
+
+\begin{itemize}
+    \item Bleak documentation: \url{https://bleak.readthedocs.io/}
+    \item Bleak GitHub: \url{https://github.com/hbldh/bleak}
+    \item ArduinoBLE reference:
+          \url{https://www.arduino.cc/reference/en/libraries/arduinoble/}
+    \item Seeed XIAO BLE Sense wiki --- IMU:
+          \url{https://wiki.seeedstudio.com/XIAO-BLE-Sense-IMU-Usage/}
+    \item Seeed XIAO BLE Sense wiki --- Bluetooth:
+          \url{https://wiki.seeedstudio.com/XIAO-BLE-Sense-Bluetooth-Usage/}
+    \item LSM6DS3 library:
+          \url{https://github.com/Seeed-Studio/Seeed_Arduino_LSM6DS3}
+    \item Bluetooth GATT specification:
+          \url{https://www.bluetooth.com/specifications/gatt/}
+    \item IEEE 754 floating point:
+          \url{https://en.wikipedia.org/wiki/IEEE_754}
+    \item Python struct module:
+          \url{https://docs.python.org/3/library/struct.html}
+    \item Python asyncio:
+          \url{https://docs.python.org/3/library/asyncio.html}
+\end{itemize}
+
+\end{document}
