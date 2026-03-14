@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.28 (TeX Live 2025) (preloaded format=pdflatex 2026.2.28)  5 MAR 2026 08:58
+This is pdfTeX, Version 3.141592653-2.6-1.40.28 (TeX Live 2025) (preloaded format=pdflatex 2026.2.28)  14 MAR 2026 16:39
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -854,7 +854,7 @@ Here is how much of TeX's memory you used:
  36 hyphenation exceptions out of 8191
  75i,16n,80p,1001b,575s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmbx7.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmbx9.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmex10.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmmi10.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmmi5.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmmi6.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmmi7.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmmi9.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmmib10.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr10.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr12.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr5.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr6.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr7.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr9.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmri10.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmri9.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmsy10.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmsy7.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmsy9.pfb></Users/pablofernandezlucas/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on "/Users/pablofernandezlucas/Documents/Pablo projects/SensorKit/docs/output/main.pdf" (16 pages, 654439 bytes).
+Output written on "/Users/pablofernandezlucas/Documents/Pablo projects/SensorKit/docs/output/main.pdf" (16 pages, 654387 bytes).
 PDF statistics:
  862 PDF objects out of 1000 (max. 8388607)
  677 compressed objects within 7 object streams
