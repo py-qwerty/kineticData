@@ -24,8 +24,11 @@ Outputs `docs/images/gyro_drift_errors.{pdf,png}` and `gyro_sampling_comparison.
 **Run notebooks:** Open in Jupyter (`jupyter notebook` or VS Code). Key notebooks:
 - `notebooks/madgwick_pipeline.ipynb` — main implementation
 - `notebooks/sensor_exploration.ipynb` — exploratory analysis
+- `notebooks/drone_attitude.ipynb` — additional attitude estimation work
 
 **Key Python dependencies:** `pandas`, `numpy`, `matplotlib`, `plotly`, `ahrs`
+
+> **Note:** There is no `requirements.txt` or `pyproject.toml`. Dependencies must be installed manually (e.g. `pip install pandas numpy matplotlib plotly ahrs`).
 
 ## Architecture
 
@@ -52,7 +55,11 @@ Raw CSV sensor data → attitude estimation → frame rotation → gravity remov
 
 ### Documentation Structure
 
-LaTeX paper in `docs/chapters/`: introduction → background → methodology → implementation (complementary filter) → madgwick → results → conclusions. The results and conclusions chapters are currently TODO placeholders.
+LaTeX paper in `docs/chapters/`: introduction → background → methodology → implementation (complementary filter) → madgwick → results → conclusions. The `results.tex` chapter is fully written (world-frame projection, position integration analysis). Only `conclusions.tex` is a TODO placeholder.
+
+**VS Code / LaTeX Workshop:** `.vscode/settings.json` configures LaTeX Workshop to auto-build on save using pdflatex, outputting to `docs/output/`. Editing `.tex` files in VS Code will trigger automatic builds.
+
+**`main.py`:** PyCharm boilerplate placeholder — not a functional entry point. Ignore it.
 
 ## Data
 
